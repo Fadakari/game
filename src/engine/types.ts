@@ -1,5 +1,7 @@
 export type GameMode = 'jet' | 'tank';
 
+export type JetSubMode = 'dogfight' | 'strike';
+
 export type GamePhase = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type DifficultyLevel = 'easy' | 'normal' | 'hard';
@@ -8,7 +10,7 @@ export type DefeatReason = 'ocean' | 'terrain' | 'combat' | 'none';
 
 export type EnemyArchetype = 'recon' | 'interceptor' | 'heavy' | 'ace';
 
-export type SurfaceUnitType = 'sam' | 'warship';
+export type SurfaceUnitType = 'sam' | 'warship' | 'command';
 
 export type TargetType = EnemyArchetype | SurfaceUnitType;
 
@@ -64,8 +66,9 @@ export interface RadarBlip {
   id: number;
   x: number; // normalized -1..1 relative to player right
   y: number; // normalized -1..1 relative to player forward (positive = ahead)
-  type: 'enemy' | 'missile' | 'ace' | 'sam' | 'warship';
+  type: 'enemy' | 'missile' | 'ace' | 'sam' | 'warship' | 'command';
   isLocked: boolean;
+  isPrimaryObjective?: boolean;
 }
 
 export interface TankMinimapBlip {
@@ -79,7 +82,7 @@ export interface TankMinimapBlip {
 export interface ProjectedTarget {
   id: number;
   archetype: TargetType;
-  category: 'air' | 'sam' | 'warship';
+  category: 'air' | 'sam' | 'warship' | 'command';
   nameFa: string;
   screenX: number; // 0..1 viewport fraction
   screenY: number; // 0..1 viewport fraction
@@ -93,6 +96,7 @@ export interface ProjectedTarget {
   leadX: number; // 0..1
   leadY: number; // 0..1
   leadVisible: boolean;
+  isPrimaryObjective?: boolean;
 }
 
 export interface ProjectedTankTarget {
@@ -103,12 +107,22 @@ export interface ProjectedTankTarget {
   screenY: number;
   inFront: boolean;
   onScreen: boolean;
+  inLineOfSight: boolean;
   distance: number;
   hpRatio: number;
   isLocked: boolean;
   leadX: number;
   leadY: number;
   leadVisible: boolean;
+}
+
+export interface StrikeObjectiveInfo {
+  wave: number;
+  titleFa: string;
+  targetLabelFa: string;
+  remaining: number;
+  total: number;
+  distanceM: number | null;
 }
 
 export interface ProjectedIncomingMissile {
@@ -157,6 +171,8 @@ export interface LeaderboardEntry {
 export interface HudSnapshot {
   phase: GamePhase;
   difficulty: DifficultyLevel;
+  jetSubMode: JetSubMode;
+  strikeObjective: StrikeObjectiveInfo | null;
   speedKmh: number;
   altitudeM: number;
   aglM: number;

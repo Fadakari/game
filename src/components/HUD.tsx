@@ -144,14 +144,19 @@ export function HUD({
         )}
 
         {hud.targets.map((t) => {
-          const isSurface = t.category === 'sam' || t.category === 'warship';
+          const isSurface =
+            t.category === 'sam' || t.category === 'warship' || t.category === 'command';
           if (t.onScreen) {
             const diamondScale = t.isLockCandidate
               ? 1.75 - t.lockProgress * 0.75
               : 1;
             const strokeColor = t.isLocked
               ? '#ef4444'
+              : t.isPrimaryObjective
+              ? '#fbbf24'
               : t.isLockCandidate
+              ? '#f59e0b'
+              : t.category === 'command'
               ? '#f59e0b'
               : t.category === 'sam'
               ? '#fb923c'
@@ -204,17 +209,26 @@ export function HUD({
                     )}
                   </svg>
 
-                  {/* Target HP mini-bar + type tag (SAM/Warship) + distance */}
+                  {/* Target HP mini-bar + type tag (Primary Objective / Command / SAM / Warship) + distance */}
                   <div
                     dir="rtl"
                     className="mt-0.5 flex flex-col items-center whitespace-nowrap"
                   >
+                    {t.isPrimaryObjective && (
+                      <span className="hud-text-shadow mb-0.5 rounded bg-amber-500/90 px-1.5 py-0.2 text-[9px] font-black text-slate-950">
+                        هدف اصلی
+                      </span>
+                    )}
                     {isSurface && (
                       <span
                         className="hud-text-shadow mb-0.5 text-[10px] font-black"
                         style={{ color: strokeColor }}
                       >
-                        {t.category === 'sam' ? 'پدافند' : 'ناو جنگی'}
+                        {t.category === 'command'
+                          ? 'مقر راداری'
+                          : t.category === 'sam'
+                          ? 'پدافند'
+                          : 'ناو جنگی'}
                       </span>
                     )}
                     <div className="h-1 w-9 overflow-hidden rounded-full bg-slate-950/80">
@@ -263,8 +277,8 @@ export function HUD({
             );
           }
 
-          // Only render off-screen directional rim arrows for airborne enemies (keep rim clean)
-          if (isSurface) return null;
+          // Render off-screen rim arrows for airborne enemies AND Strike Mission primary objectives
+          if (isSurface && !t.isPrimaryObjective) return null;
 
           let dx = t.screenX - 0.5;
           let dy = t.screenY - 0.5;
@@ -285,23 +299,31 @@ export function HUD({
               style={{ left: `${leftPct}%`, top: `${topPct}%` }}
             >
               <svg
-                width="20"
-                height="20"
+                width={t.isPrimaryObjective ? '24' : '20'}
+                height={t.isPrimaryObjective ? '24' : '20'}
                 viewBox="0 0 18 18"
                 style={{ transform: `rotate(${angle}rad)` }}
               >
                 <polygon
                   points="17,9 2,2.5 5.5,9 2,15.5"
-                  fill={t.archetype === 'ace' ? '#fbbf24' : '#ef4444'}
+                  fill={
+                    t.isPrimaryObjective
+                      ? '#fbbf24'
+                      : t.archetype === 'ace'
+                      ? '#fbbf24'
+                      : '#ef4444'
+                  }
                   stroke="#09131f"
                   strokeWidth="1.2"
                 />
               </svg>
               <span
                 dir="rtl"
-                className="hud-text-shadow tabular-nums text-[10px] font-bold text-amber-200 whitespace-nowrap"
+                className={`hud-text-shadow tabular-nums text-[10px] font-bold whitespace-nowrap ${
+                  t.isPrimaryObjective ? 'text-amber-300' : 'text-amber-200'
+                }`}
               >
-                {toFaNum(t.distance)}م
+                {t.isPrimaryObjective ? `هدف · ${toFaNum(t.distance)}م` : `${toFaNum(t.distance)}م`}
               </span>
             </div>
           );
@@ -555,8 +577,35 @@ export function HUD({
           )}
         </div>
 
-        {/* Center-Top Alerts, Wave Announcement & Kill Feed */}
-        <div className="flex max-w-md flex-col items-center gap-2 pt-1 text-center">
+        {/* Center-Top Strike Mission Objective Banner, Alerts, Wave Announcement & Kill Feed */}
+        <div className="flex max-w-md flex-col items-center gap-1.5 pt-0.5 text-center">
+          {hud.strikeObjective && (
+            <div
+              data-testid="strike-objective-banner"
+              className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-amber-400/55 bg-[#09131f]/86 px-3.5 py-1.5 shadow-lg"
+            >
+              <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black text-slate-950">
+                هدف عملیات
+              </span>
+              <span className="text-xs font-black text-amber-200 sm:text-sm">
+                {hud.strikeObjective.titleFa}
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="tabular-nums text-[11px] font-bold text-slate-100">
+                باقی‌مانده: {toFaNum(hud.strikeObjective.remaining)} از{' '}
+                {toFaNum(hud.strikeObjective.total)}
+              </span>
+              {hud.strikeObjective.distanceM !== null && (
+                <>
+                  <span className="text-slate-500">·</span>
+                  <span className="tabular-nums text-[11px] font-black text-sky-300">
+                    فاصله تا هدف: {toFaNum(hud.strikeObjective.distanceM)}م
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
           {hud.gpwsWarning && (
             <div className="animate-alert-flash flex items-center gap-2 rounded-lg border border-red-500 bg-red-950/90 px-4 py-1.5 text-sm font-black text-red-100 shadow-lg">
               <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
@@ -681,11 +730,21 @@ export function HUD({
                 >
                   {b.type === 'missile' ? (
                     <div className="h-2.5 w-2.5 rotate-45 bg-red-500 ring-1 ring-amber-200" />
+                  ) : b.type === 'command' ? (
+                    <div
+                      className={`h-2.5 w-2.5 rounded-[2px] ${
+                        b.isLocked
+                          ? 'bg-red-500 ring-2 ring-red-300'
+                          : 'bg-amber-400 ring-2 ring-amber-200'
+                      }`}
+                    />
                   ) : b.type === 'sam' ? (
                     <div
                       className={`h-2 w-2 rounded-[2px] ${
                         b.isLocked
                           ? 'bg-red-500 ring-2 ring-red-300'
+                          : b.isPrimaryObjective
+                          ? 'bg-amber-400 ring-2 ring-amber-200'
                           : 'bg-orange-400 ring-1 ring-orange-200/70'
                       }`}
                     />
@@ -694,6 +753,8 @@ export function HUD({
                       className={`h-2.5 w-1.5 rounded-[1px] ${
                         b.isLocked
                           ? 'bg-red-500 ring-2 ring-red-300'
+                          : b.isPrimaryObjective
+                          ? 'bg-amber-400 ring-2 ring-amber-200'
                           : 'bg-cyan-400 ring-1 ring-cyan-200/70'
                       }`}
                     />
@@ -702,8 +763,8 @@ export function HUD({
                       className={`h-2 w-2 rounded-full ${
                         b.isLocked
                           ? 'bg-red-500 ring-2 ring-red-300'
-                          : b.type === 'ace'
-                          ? 'bg-amber-400'
+                          : b.isPrimaryObjective || b.type === 'ace'
+                          ? 'bg-amber-400 ring-1 ring-amber-200'
                           : 'bg-rose-400'
                       }`}
                     />

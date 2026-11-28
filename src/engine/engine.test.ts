@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { getTerrainHeight } from './terrain';
+import { getCoastlineX, getRiverCenterX, getTerrainHeight } from './terrain';
 import {
   checkTerrainCollision,
   computeLeadPosition,
@@ -19,11 +19,14 @@ import {
   createEnemyUnit,
   DIFFICULTY_PROFILES,
   getWaveDefinition,
+  MIN_ENGAGEMENT_DISTANCE,
   updateEnemyAI,
   type EnemyActionEvents,
 } from './enemyAI';
 import {
+  createStrikeSurfaceUnits,
   createSurfaceWaveUnits,
+  getStrikeMissionDefinition,
   hasTerrainLineOfSight,
   updateSurfaceUnit,
   type SurfaceActionEvents,
@@ -467,4 +470,111 @@ test('leaderboard anti-cheat validates plausible scores, rejects tampered payloa
   assert.equal(top100[0].score, 12400, 'highest score must rank #1');
   assert.equal(top100[99].score, 2500, '100th rank must match 25th lowest of 125');
 });
+
+test('continental terrain has mainland landmass, wide winding river channel, and eastern coastal sea', () => {
+  const z = -900;
+  const coastX = getCoastlineX(z);
+  const riverX = getRiverCenterX(z);
+
+  // Far east of coastline must be open coastal sea (height 0)
+  assert.equal(
+    getTerrainHeight(coastX + 350, z),
+    0,
+    'open sea east of coastline must be at water level y=0',
+  );
+
+  // Center of the wide navigable river channel must be water (height 0)
+  assert.equal(
+    getTerrainHeight(riverX, z),
+    0,
+    'winding continental river channel center must be open water y=0',
+  );
+
+  // Mainland continental interior well west of coastline & away from river must be elevated landmass
+  const westernMainlandH = getTerrainHeight(-1200, -700);
+  assert.ok(
+    westernMainlandH > 18,
+    `expected elevated continental mainland landmass in west, got ${westernMainlandH}`,
+  );
+});
+
+test('enemy jet enforces strict >=320m standoff distance by breaking away cleanly', () => {
+  assert.ok(
+    MIN_ENGAGEMENT_DISTANCE >= 320,
+    `MIN_ENGAGEMENT_DISTANCE must be >= 320m, got ${MIN_ENGAGEMENT_DISTANCE}`,
+  );
+
+  const unit = createEnemyUnit(
+    99,
+    'interceptor',
+    new THREE.Vector3(0, 240, -280),
+    0,
+    1,
+    'normal',
+  );
+  const events: EnemyActionEvents = {
+    firedCannon: false,
+    cannonOrigin: new THREE.Vector3(),
+    cannonDir: new THREE.Vector3(),
+    firedMissile: false,
+    lockingPlayer: false,
+    deployedFlare: false,
+  };
+
+  updateEnemyAI(
+    unit,
+    new THREE.Vector3(0, 240, 0),
+    new THREE.Vector3(0, 0, -120),
+    new THREE.Vector3(0, 0, -1),
+    Infinity,
+    false,
+    true,
+    0.03,
+    events,
+    getTerrainHeight,
+    'normal',
+  );
+
+  assert.equal(
+    unit.state,
+    'BREAKAWAY',
+    'enemy jet at 280m must immediately trigger BREAKAWAY to maintain standoff >= 320m',
+  );
+  assert.equal(
+    events.firedCannon,
+    false,
+    'enemy jet inside minimum standoff radius must not fire close-range cannon',
+  );
+});
+
+test('tactical strike missions define Persian objectives and tag primary targets across waves 1 to 4', () => {
+  const m1 = getStrikeMissionDefinition(1);
+  const m2 = getStrikeMissionDefinition(2);
+  const m3 = getStrikeMissionDefinition(3);
+  const m4 = getStrikeMissionDefinition(4);
+
+  assert.equal(m1.objectiveKind, 'command');
+  assert.equal(m2.objectiveKind, 'sam');
+  assert.equal(m3.objectiveKind, 'warship');
+  assert.equal(m4.objectiveKind, 'air');
+
+  const wave1Surface = createStrikeSurfaceUnits(m1, 800, 'normal', getTerrainHeight);
+  const wave1Primary = wave1Surface.filter((u) => u.isPrimaryObjective);
+  assert.ok(wave1Primary.length >= 1, 'wave 1 strike mission must spawn primary command radar bunker');
+  assert.ok(
+    wave1Primary.every((u) => u.type === 'command'),
+    'wave 1 primary objective targets must be command bunkers',
+  );
+
+  const wave2Surface = createStrikeSurfaceUnits(m2, 900, 'normal', getTerrainHeight);
+  const wave2Primary = wave2Surface.filter((u) => u.isPrimaryObjective);
+  assert.ok(wave2Primary.length >= 2, 'wave 2 strike mission must tag SAM batteries as primary');
+  assert.ok(wave2Primary.every((u) => u.type === 'sam'));
+
+  const wave3Surface = createStrikeSurfaceUnits(m3, 1000, 'normal', getTerrainHeight);
+  const wave3Primary = wave3Surface.filter((u) => u.isPrimaryObjective);
+  assert.ok(wave3Primary.length >= 1, 'wave 3 strike mission must tag naval warships as primary');
+  assert.ok(wave3Primary.every((u) => u.type === 'warship' && u.position.y === 0));
+});
+
 

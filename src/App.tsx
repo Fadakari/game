@@ -10,6 +10,7 @@ import type {
   EdgeTelemetryInfo,
   GameMode,
   HudSnapshot,
+  JetSubMode,
   LeaderboardEntry,
   TankHudSnapshot,
 } from './engine/types';
@@ -22,6 +23,8 @@ import {
 const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
   difficulty: 'normal',
+  jetSubMode: 'dogfight',
+  strikeObjective: null,
   speedKmh: 460,
   altitudeM: 225,
   aglM: 225,
@@ -126,9 +129,17 @@ function getInitialModeFromQuery(): GameMode {
   return param === 'tank' ? 'tank' : 'jet';
 }
 
+function getInitialSubModeFromQuery(): JetSubMode {
+  if (typeof window === 'undefined') return 'dogfight';
+  const param = new URLSearchParams(window.location.search).get('submode');
+  return param === 'strike' ? 'strike' : 'dogfight';
+}
+
 export default function App() {
   const controllerRef = useRef<EngineController | null>(null);
   const [mode, setMode] = useState<GameMode>(getInitialModeFromQuery);
+  const [jetSubMode, setJetSubMode] = useState<JetSubMode>(getInitialSubModeFromQuery);
+  const jetSubModeRef = useRef<JetSubMode>(jetSubMode);
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [tankHud, setTankHud] = useState<TankHudSnapshot>(INITIAL_TANK_HUD);
   const [buildingFootprints, setBuildingFootprints] = useState<BuildingFootprint[]>([]);
@@ -337,9 +348,15 @@ export default function App() {
     controllerRef.current?.setDifficulty(level);
   }, []);
 
+  const handleSelectJetSubMode = useCallback((subMode: JetSubMode) => {
+    jetSubModeRef.current = subMode;
+    setJetSubMode(subMode);
+    controllerRef.current?.setJetSubMode(subMode);
+  }, []);
+
   const handleStart = useCallback(() => {
     setLeaderboardOpen(false);
-    controllerRef.current?.startNewGame(difficulty);
+    controllerRef.current?.startNewGame(difficulty, jetSubModeRef.current);
     triggerOnboardingOnce(mode);
   }, [difficulty, mode, triggerOnboardingOnce]);
 
@@ -422,6 +439,7 @@ export default function App() {
       {/* Isolated 3D WebGL Engine Canvas (Jet or Tank) */}
       <GameCanvas
         mode={mode}
+        jetSubMode={jetSubMode}
         difficulty={difficulty}
         onHudUpdate={handleHudUpdate}
         onTankHudUpdate={handleTankHudUpdate}
@@ -475,6 +493,7 @@ export default function App() {
       {/* Title, Pause, Game Over & Portrait Rotation Overlays */}
       <Overlays
         mode={mode}
+        jetSubMode={jetSubMode}
         hud={activeHudSummary}
         edgeTelemetry={edgeTelemetry}
         difficulty={difficulty}
@@ -482,6 +501,7 @@ export default function App() {
         isFullscreen={isFullscreen}
         isPortraitMobile={isPortraitMobile}
         onSelectMode={handleSelectMode}
+        onSelectJetSubMode={handleSelectJetSubMode}
         onSelectDifficulty={handleSelectDifficulty}
         onStart={handleStart}
         onResume={handleResume}

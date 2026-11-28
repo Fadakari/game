@@ -35,9 +35,11 @@ interface SharedTankGeoBank {
   buggyGunGeo: THREE.CylinderGeometry;
   // Siege boss extras
   siegePodGeo: THREE.BoxGeometry;
-  // Shared contact shadow & muzzle flash
+  // Shared contact shadow, muzzle flash & enemy rear IFF beacon
   shadowDiscGeo: THREE.PlaneGeometry;
   muzzleFlashGeo: THREE.ConeGeometry;
+  iffBeaconGeo: THREE.BoxGeometry;
+  iffStalkGeo: THREE.CylinderGeometry;
 }
 
 interface TankMaterialPalette {
@@ -49,6 +51,7 @@ interface TankMaterialPalette {
   barrelMat: THREE.MeshStandardMaterial;
   muzzleMat: THREE.MeshBasicMaterial;
   shadowMat: THREE.MeshBasicMaterial;
+  iffBeaconMat: THREE.MeshBasicMaterial;
 }
 
 let sharedTankGeo: SharedTankGeoBank | null = null;
@@ -146,6 +149,10 @@ function getSharedTankGeometries(): SharedTankGeoBank {
   muzzleFlashGeo.rotateX(-Math.PI / 2);
   muzzleFlashGeo.translate(0, 0, -1.15);
 
+  // Glowing red enemy tactical IFF rear turret beacon
+  const iffBeaconGeo = new THREE.BoxGeometry(0.56, 0.24, 0.24);
+  const iffStalkGeo = new THREE.CylinderGeometry(0.05, 0.06, 0.34, 6);
+
   sharedTankGeo = {
     mbtHullGeo,
     mbtTrackGeo,
@@ -165,6 +172,8 @@ function getSharedTankGeometries(): SharedTankGeoBank {
     siegePodGeo,
     shadowDiscGeo,
     muzzleFlashGeo,
+    iffBeaconGeo,
+    iffStalkGeo,
   };
   return sharedTankGeo;
 }
@@ -225,45 +234,57 @@ function getSharedTankMaterials(): Record<'player' | TankEnemyArchetype, TankMat
     depthWrite: false,
   });
 
+  const iffBeaconMat = new THREE.MeshBasicMaterial({
+    color: 0xff2b2b,
+    fog: false,
+  });
+
   const makePalette = (
     hullHex: number,
     turretHex: number,
     accentHex: number,
     opticHex: number,
+    hullRoughness = 0.72,
+    hullMetalness = 0.22,
+    turretRoughness = 0.62,
+    turretMetalness = 0.28,
   ): TankMaterialPalette => ({
     hullMat: new THREE.MeshStandardMaterial({
       color: hullHex,
-      roughness: 0.72,
-      metalness: 0.22,
+      roughness: hullRoughness,
+      metalness: hullMetalness,
     }),
     turretMat: new THREE.MeshStandardMaterial({
       color: turretHex,
-      roughness: 0.62,
-      metalness: 0.28,
+      roughness: turretRoughness,
+      metalness: turretMetalness,
     }),
     trackMat,
     accentMat: new THREE.MeshStandardMaterial({
       color: accentHex,
-      roughness: 0.4,
-      metalness: 0.45,
+      roughness: 0.36,
+      metalness: 0.48,
     }),
     opticMat: new THREE.MeshStandardMaterial({
       color: opticHex,
       emissive: opticHex,
-      emissiveIntensity: 0.75,
+      emissiveIntensity: 0.9,
       roughness: 0.16,
       metalness: 0.2,
     }),
     barrelMat,
     muzzleMat,
     shadowMat,
+    iffBeaconMat,
   });
 
   sharedTankMats = {
-    player: makePalette(0x636b54, 0x737c61, 0xd99b26, 0x38bdf8),
-    buggy: makePalette(0x8c7051, 0x765c42, 0xdc2626, 0xff5a36),
-    mbt: makePalette(0x4a4f56, 0x3e434a, 0xdc2626, 0xff3b2f),
-    siege: makePalette(0x2d3138, 0x3d2a2a, 0xf59e0b, 0xff2a2a),
+    // Player: warm olive-drab NATO armor with golden trim & cyan optics
+    player: makePalette(0x636b54, 0x737c61, 0xd99b26, 0x38bdf8, 0.7, 0.24, 0.6, 0.3),
+    // Enemies: distinct high-contrast dark-crimson & charcoal military camo with metallic specular sheen
+    buggy: makePalette(0x28262b, 0x7a1c22, 0xe11d2f, 0xff453a, 0.46, 0.42, 0.42, 0.44),
+    mbt: makePalette(0x22252c, 0x6b151b, 0xef233c, 0xff2f2f, 0.44, 0.44, 0.4, 0.46),
+    siege: makePalette(0x1a1d24, 0x5c1018, 0xf43f5e, 0xff2222, 0.4, 0.48, 0.38, 0.5),
   };
   return sharedTankMats;
 }
@@ -336,6 +357,14 @@ export function buildTankMesh(kind: 'player' | TankEnemyArchetype): TankVisualRi
     const optic = new THREE.Mesh(geo.mbtOpticGeo, pal.opticMat);
     optic.position.set(0.32, 0.45, -0.68);
     turretPivot.add(optic);
+
+    // Glowing red tactical IFF beacon mounted on enemy turret rear
+    const buggyIffStalk = new THREE.Mesh(geo.iffStalkGeo, pal.trackMat);
+    buggyIffStalk.position.set(0, 0.68, 0.7);
+    turretPivot.add(buggyIffStalk);
+    const buggyIffLight = new THREE.Mesh(geo.iffBeaconGeo, pal.iffBeaconMat);
+    buggyIffLight.position.set(0, 0.86, 0.72);
+    turretPivot.add(buggyIffLight);
 
     barrelPivot.position.set(0, 0.32, -0.68);
     const gun = new THREE.Mesh(geo.buggyGunGeo, pal.barrelMat);
@@ -412,6 +441,28 @@ export function buildTankMesh(kind: 'player' | TankEnemyArchetype): TankVisualRi
     rightSmokePod.position.set(1.42, 0.62, -0.45);
     rightSmokePod.rotation.y = -0.3;
     turretPivot.add(rightSmokePod);
+
+    // Glowing red tactical IFF beacon light on enemy turret bustle rear (unmistakable visual silhouette)
+    if (kind !== 'player') {
+      const iffStalk = new THREE.Mesh(geo.iffStalkGeo, pal.trackMat);
+      iffStalk.position.set(0, 1.06, 1.56);
+      turretPivot.add(iffStalk);
+
+      const iffBeacon = new THREE.Mesh(geo.iffBeaconGeo, pal.iffBeaconMat);
+      iffBeacon.position.set(0, 1.24, 1.62);
+      turretPivot.add(iffBeacon);
+
+      // Subtle side crimson identification bars on turret bustle flanks
+      const leftId = new THREE.Mesh(geo.iffBeaconGeo, pal.iffBeaconMat);
+      leftId.scale.set(0.28, 0.65, 1.65);
+      leftId.position.set(-1.18, 0.72, 1.15);
+      turretPivot.add(leftId);
+
+      const rightId = new THREE.Mesh(geo.iffBeaconGeo, pal.iffBeaconMat);
+      rightId.scale.set(0.28, 0.65, 1.65);
+      rightId.position.set(1.18, 0.72, 1.15);
+      turretPivot.add(rightId);
+    }
 
     // Extra twin ATGM launcher pods for Heavy Siege Boss Tank
     if (kind === 'siege') {

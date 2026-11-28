@@ -20,6 +20,7 @@ import {
 } from './tankMeshes';
 import {
   computeDirectionalArmorHit,
+  computeTankBallisticFireDir,
   createEnemyTankUnit,
   createInitialTankState,
   getTankWaveDefinition,
@@ -107,6 +108,8 @@ const _targetVec3: Vec3 = { x: 0, y: 0, z: 0 };
 const _targetVel3: Vec3 = { x: 0, y: 0, z: 0 };
 const _shooterVec3: Vec3 = { x: 0, y: 0, z: 0 };
 const _projDirXZ = { x: 0, z: 0 };
+const _aimTargetPoint = new THREE.Vector3();
+const _fireDirOut: Vec3 = { x: 0, y: 0, z: -1 };
 const _aiEvents: EnemyTankActionEvents = {
   firedShell: false,
   firedAtgm: false,
@@ -160,6 +163,12 @@ export class TankCombatEngine {
   private particles: TankParticle[] = [];
   private particleMesh: THREE.InstancedMesh;
   private particleCursor = 0;
+
+  // Dynamic pooled muzzle/explosion point light flash
+  private flashLight: THREE.PointLight;
+  private flashLightTimer = 0;
+  private flashLightDuration = 0.14;
+  private flashLightPeak = 0;
 
   // Game & weapon state
   private phase: GamePhase = 'title';
@@ -270,8 +279,8 @@ export class TankCombatEngine {
 
     // 2. Dusty War-Torn Urban Scene + Atmospheric FogExp2 + RoomEnvironment
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xcab59a);
-    this.scene.fog = new THREE.FogExp2(0xcab59a, 0.0044);
+    this.scene.background = new THREE.Color(0xbda992);
+    this.scene.fog = new THREE.FogExp2(0xbda992, 0.0038);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -282,25 +291,29 @@ export class TankCombatEngine {
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.4, 720);
     this.renderer.setSize(width, height, false);
 
-    // 3. Warm Dusty Sunlight + Cool Sky/Ground Hemisphere Contrast
-    const hemi = new THREE.HemisphereLight(0xdbe8f5, 0x6e5a44, 0.92);
+    // 3. Warm Dusty Sunlight + Cool Sky / Dark Asphalt Hemisphere Contrast + Dynamic Flash Light
+    const hemi = new THREE.HemisphereLight(0xd9e8f6, 0x453b31, 0.88);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xffe1b8, 2.25);
-    sun.position.set(110, 145, 75);
+    const sun = new THREE.DirectionalLight(0xffe4bc, 2.48);
+    sun.position.set(115, 148, 72);
     if (!this.isSoftwareGl) {
       sun.castShadow = true;
       sun.shadow.mapSize.set(1024, 1024);
       sun.shadow.camera.near = 20;
       sun.shadow.camera.far = 420;
-      sun.shadow.camera.left = -160;
-      sun.shadow.camera.right = 160;
-      sun.shadow.camera.top = 160;
-      sun.shadow.camera.bottom = -160;
-      sun.shadow.bias = -0.0005;
-      sun.shadow.normalBias = 0.03;
+      sun.shadow.camera.left = -165;
+      sun.shadow.camera.right = 165;
+      sun.shadow.camera.top = 165;
+      sun.shadow.camera.bottom = -165;
+      sun.shadow.bias = -0.00045;
+      sun.shadow.normalBias = 0.025;
     }
     this.scene.add(sun);
+
+    this.flashLight = new THREE.PointLight(0xffb347, 0, 38, 1.8);
+    this.flashLight.position.set(0, -100, 0);
+    this.scene.add(this.flashLight);
 
     // Subtle warm sunlit haze disc high in sky
     const sunDisc = new THREE.Mesh(
@@ -478,7 +491,10 @@ export class TankCombatEngine {
 
   public addAimDelta(deltaYawRad: number, deltaPitchRad: number): void {
     this.aimYaw = normalizeAngle(this.aimYaw + deltaYawRad);
-    this.aimPitch = Math.max(-0.14, Math.min(0.24, this.aimPitch + deltaPitchRad));
+    this.aimPitch = Math.max(
+      TANK_PHYSICS_CONFIG.minBarrelPitch,
+      Math.min(TANK_PHYSICS_CONFIG.maxBarrelPitch, this.aimPitch + deltaPitchRad),
+    );
   }
 
   public triggerCannon(): void {
@@ -490,19 +506,21 @@ export class TankCombatEngine {
   }
 
   /**
-   * Target-lock assist: snaps player aim cleanly onto the nearest visible enemy tank.
+   * Target-lock assist: snaps player aim cleanly onto the nearest visible enemy tank hull
+   * with automatic downward barrel depression for close-range targets.
    */
   public triggerTargetSnap(): void {
     if (this.phase !== 'playing') return;
     let bestId: number | null = null;
     let bestYaw = this.aimYaw;
+    let bestPitch = -0.02;
     let bestScore = Infinity;
 
     _v1.set(this.player.x, this.player.y + 2.1, this.player.z);
     for (let i = 0; i < this.enemies.length; i++) {
       const u = this.enemies[i].unit;
       if (!u.alive || u.dying) continue;
-      _v2.set(u.x, u.y + 1.8, u.z);
+      _v2.set(u.x, u.y + 1.3, u.z);
       const dist = _v1.distanceTo(_v2);
       if (dist > 175) continue;
       const los = hasCityLineOfSight(_v1, _v2, this.layout.aabbs);
@@ -513,13 +531,18 @@ export class TankCombatEngine {
         bestScore = score;
         bestId = u.id;
         bestYaw = yawToEnemy;
+        const horiz = Math.max(4, Math.hypot(u.x - this.player.x, u.z - this.player.z));
+        bestPitch = Math.max(
+          TANK_PHYSICS_CONFIG.minBarrelPitch,
+          Math.min(TANK_PHYSICS_CONFIG.maxBarrelPitch, Math.atan2(u.y + 1.25 - _v1.y, horiz)),
+        );
       }
     }
 
     if (bestId !== null) {
       this.lockedTargetId = bestId;
       this.aimYaw = bestYaw;
-      this.aimPitch = 0.01;
+      this.aimPitch = bestPitch;
       this.audio.playHitConfirm();
     }
   }
@@ -787,7 +810,22 @@ export class TankCombatEngine {
     }
   }
 
+  private triggerFlashLight(
+    pos: THREE.Vector3,
+    peakIntensity: number,
+    durationSec: number,
+    hexColor = 0xffb347,
+  ): void {
+    this.flashLight.position.set(pos.x, Math.max(1.2, pos.y + 0.6), pos.z);
+    this.flashLight.color.setHex(hexColor);
+    this.flashLightPeak = peakIntensity;
+    this.flashLightDuration = durationSec;
+    this.flashLightTimer = durationSec;
+    this.flashLight.intensity = peakIntensity;
+  }
+
   private spawnTankExplosion(pos: THREE.Vector3, heavy = true): void {
+    this.triggerFlashLight(pos, heavy ? 52 : 28, heavy ? 0.28 : 0.16, 0xff7a24);
     const count = heavy ? 28 : 14;
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -986,6 +1024,13 @@ export class TankCombatEngine {
     if (this.playerMuzzleFlashTimer > 0) {
       this.playerMuzzleFlashTimer = Math.max(0, this.playerMuzzleFlashTimer - dt);
     }
+    if (this.flashLightTimer > 0) {
+      this.flashLightTimer = Math.max(0, this.flashLightTimer - dt);
+      const ratio = this.flashLightDuration > 0 ? this.flashLightTimer / this.flashLightDuration : 0;
+      this.flashLight.intensity = this.flashLightPeak * ratio * ratio;
+    } else if (this.flashLight.intensity !== 0) {
+      this.flashLight.intensity = 0;
+    }
     if (this.ghostHp > this.playerHp) {
       this.ghostHp = Math.max(this.playerHp, this.ghostHp - 32 * dt);
     } else {
@@ -1022,9 +1067,25 @@ export class TankCombatEngine {
     this.survivalTimeSec += dt;
     const diffProfile = DIFFICULTY_PROFILES[this.difficulty];
 
-    // 1. Player Hull Kinematics & Independent Turret Traverse
+    // 1. Player Hull Kinematics & Close-Range Ballistic Depression Convergence
     stepTankHullPhysics(this.player, this.input, dt, this.layout.aabbs);
-    stepTurretAim(this.player, this.aimYaw, this.aimPitch, dt);
+
+    // Raycast along turret aim vector to detect close/mid-range enemy hull or surface impact point
+    const convergedEnemy = this.resolveBarrelAimPoint(
+      this.player.turretYaw,
+      this.aimPitch,
+      _aimTargetPoint,
+    );
+    const pivotY = this.player.y + 2.06;
+    const targetHorizDist = Math.max(
+      4.5,
+      Math.hypot(_aimTargetPoint.x - this.player.x, _aimTargetPoint.z - this.player.z),
+    );
+    // Automatically depress barrel smoothly onto close-range hulls without shooting over turrets
+    const solvedPitch = convergedEnemy
+      ? Math.atan2(_aimTargetPoint.y - pivotY, targetHorizDist)
+      : this.aimPitch;
+    stepTurretAim(this.player, this.aimYaw, solvedPitch, dt);
 
     // Subtle track dust kickup when driving fast
     if (Math.abs(this.player.speed) > 9 && Math.random() < 0.35) {
@@ -1069,7 +1130,7 @@ export class TankCombatEngine {
       this.deployPlayerSmoke();
     }
 
-    // Player Main Cannon (120mm AP Shell with recoil, muzzle flash & camera punch)
+    // Player Main Cannon (120mm AP Shell with exact close-range ballistic hull convergence & light flash)
     const barrelFwdX = -Math.sin(this.player.turretYaw) * Math.cos(this.player.barrelPitch);
     const barrelFwdY = Math.sin(this.player.barrelPitch);
     const barrelFwdZ = -Math.cos(this.player.turretYaw) * Math.cos(this.player.barrelPitch);
@@ -1078,16 +1139,29 @@ export class TankCombatEngine {
       this.cannonBufferTimer = 0;
       this.cannonReloadTimer = TANK_PHYSICS_CONFIG.cannonReloadSec;
       this.player.recoilOffset = 1.0;
-      this.playerMuzzleFlashTimer = 0.08;
+      this.playerMuzzleFlashTimer = 0.085;
       this.cameraTrauma = Math.min(1, this.cameraTrauma + 0.34);
 
+      // Muzzle world origin (clamped safely above ground even at steep -19.5 deg close-range depression)
+      const muzzleDist = 5.4;
       _v1.set(
-        this.player.x + barrelFwdX * 6.2,
-        this.player.y + 2.12 + barrelFwdY * 5.2,
-        this.player.z + barrelFwdZ * 6.2,
+        this.player.x + barrelFwdX * muzzleDist,
+        Math.max(this.player.y + 0.85, this.player.y + 2.06 + barrelFwdY * 4.6),
+        this.player.z + barrelFwdZ * muzzleDist,
       );
-      _v2.set(barrelFwdX, barrelFwdY + 0.012, barrelFwdZ);
+
+      // Solve exact ballistic trajectory from muzzle to aimed hull/world point (prevents overshooting close targets!)
+      computeTankBallisticFireDir(
+        _v1,
+        _aimTargetPoint,
+        TANK_PHYSICS_CONFIG.shellSpeed,
+        TANK_PHYSICS_CONFIG.shellGravity,
+        _fireDirOut,
+      );
+      _v2.set(_fireDirOut.x, _fireDirOut.y, _fireDirOut.z);
+
       this.spawnShell(_v1, _v2, TANK_PHYSICS_CONFIG.shellSpeed, true, false, 68);
+      this.triggerFlashLight(_v1, 32, 0.12, 0xffc864);
       this.audio.playTankCannon();
 
       // Muzzle blast dust puff
@@ -1191,6 +1265,25 @@ export class TankCombatEngine {
       rec.rig.turretPivot.rotation.y = normalizeAngle(u.turretYaw - u.hullYaw);
       rec.rig.barrelPivot.position.z = (u.archetype === 'buggy' ? -0.68 : -1.35) + u.recoilOffset * 0.55;
       setTankRigHitFlash(rec.rig, u.hitFlashTimer > 0);
+
+      // Enemy visibility trails: rear diesel exhaust smoke puffs & moving wheel/tread dust trails
+      const enemySpeedSq = u.vx * u.vx + u.vz * u.vz;
+      if (!u.dying) {
+        const efX = -Math.sin(u.hullYaw);
+        const efZ = -Math.cos(u.hullYaw);
+        if (Math.random() < 0.14) {
+          // Dark diesel exhaust puff rising from enemy engine deck
+          _v1.set(u.x - efX * 2.6, u.y + 1.55, u.z - efZ * 2.6);
+          _v2.set((Math.random() - 0.5) * 1.4, 2.1 + Math.random() * 1.1, (Math.random() - 0.5) * 1.4);
+          this.spawnParticle(_v1, _v2, 0.72, 0.45, 1.35, 0x24262a, 1.2);
+        }
+        if (enemySpeedSq > 16 && Math.random() < 0.28) {
+          // Warm street dust kicked up behind enemy treads/wheels
+          _v1.set(u.x - efX * 3.1, u.y + 0.32, u.z - efZ * 3.1);
+          _v2.set((Math.random() - 0.5) * 2.0, 1.15, (Math.random() - 0.5) * 2.0);
+          this.spawnParticle(_v1, _v2, 0.58, 0.75, 2.0, 0x8e806c, 0.5);
+        }
+      }
 
       if (u.dying && Math.random() < 0.6) {
         _v1.set(u.x, u.y + 2.0, u.z);
@@ -1357,9 +1450,9 @@ export class TankCombatEngine {
           const u = this.enemies[e].unit;
           if (!u.alive || u.dying) continue;
           _targetVec3.x = u.x;
-          _targetVec3.y = u.y + 1.65;
+          _targetVec3.y = u.y + 1.38;
           _targetVec3.z = u.z;
-          if (segmentSphereIntersect(s.prevPos, s.pos, _targetVec3, u.hitRadius + (s.isMg ? 0.35 : 0.65))) {
+          if (segmentSphereIntersect(s.prevPos, s.pos, _targetVec3, u.hitRadius + (s.isMg ? 0.4 : 0.78))) {
             this.damageEnemyTank(u, s.damage, s.vel, s.pos, !s.isMg);
             hit = true;
             break;
@@ -1577,28 +1670,86 @@ export class TankCombatEngine {
     this.camera.updateMatrixWorld();
   }
 
+  /**
+   * Resolves the exact 3D point where a given yaw/pitch ray lands (enemy tank hull, building wall,
+   * or ground intersection), guaranteeing clean close-range hull intersection without overshooting.
+   */
+  private resolveBarrelAimPoint(
+    yaw: number,
+    pitch: number,
+    outPoint: THREE.Vector3,
+  ): EnemyTankUnit | null {
+    const dirX = -Math.sin(yaw) * Math.cos(pitch);
+    const dirY = Math.sin(pitch);
+    const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+
+    const ox = this.player.x;
+    const oy = this.player.y + 2.06;
+    const oz = this.player.z;
+
+    let maxDist = 150;
+    if (dirY < -0.005) {
+      const groundDist = (0.35 - oy) / dirY;
+      if (groundDist > 5 && groundDist < maxDist) {
+        maxDist = groundDist;
+      }
+    }
+
+    _v1.set(ox, oy, oz);
+    _v2.set(ox + dirX * maxDist, Math.max(0.35, oy + dirY * maxDist), oz + dirZ * maxDist);
+
+    const wallT = segmentCityImpact(_v1, _v2, this.layout.aabbs, false);
+    if (wallT >= 0) {
+      maxDist *= wallT;
+      _v2.lerpVectors(_v1, _v2, wallT);
+    }
+
+    // Check if an alive enemy tank hull sits along the aim line (with close-range hull depression snap)
+    let hitEnemy: EnemyTankUnit | null = null;
+    let bestEnemyDist = maxDist;
+    for (let i = 0; i < this.enemies.length; i++) {
+      const u = this.enemies[i].unit;
+      if (!u.alive || u.dying) continue;
+      const ex = u.x - ox;
+      const ez = u.z - oz;
+      const horizDist = Math.hypot(ex, ez);
+      if (horizDist < 4.5 || horizDist > bestEnemyDist) continue;
+
+      const yawToEnemy = Math.atan2(-ex, -ez);
+      const yawErr = Math.abs(normalizeAngle(yawToEnemy - yaw));
+      // Generous close-range hull convergence cone so point-blank duels always strike the hull cleanly
+      const coneRad = horizDist < 34 ? 0.14 : 0.065;
+      if (yawErr > coneRad) continue;
+
+      _targetVec3.x = u.x;
+      _targetVec3.y = u.y + 1.25;
+      _targetVec3.z = u.z;
+      if (!hasCityLineOfSight(_v1, _targetVec3, this.layout.aabbs)) continue;
+
+      const ey = _targetVec3.y - oy;
+      const pitchToHull = Math.atan2(ey, horizDist);
+      const pitchErr = Math.abs(pitchToHull - pitch);
+      if (pitchErr <= (horizDist < 34 ? 0.24 : 0.11)) {
+        bestEnemyDist = horizDist;
+        hitEnemy = u;
+        outPoint.set(u.x, u.y + 1.22, u.z);
+      }
+    }
+
+    if (!hitEnemy) {
+      outPoint.copy(_v2);
+    }
+    return hitEnemy;
+  }
+
   private emitHudSnapshot(atgmLockWarning: boolean, atgmIncomingWarning: boolean): void {
     // 1. Project Dual Reticles: Player Aim Point vs Heavy Barrel Current Alignment Point
-    const aimDirX = -Math.sin(this.aimYaw) * Math.cos(this.aimPitch);
-    const aimDirY = Math.sin(this.aimPitch);
-    const aimDirZ = -Math.cos(this.aimYaw) * Math.cos(this.aimPitch);
-
-    _v1.set(this.player.x, this.player.y + 2.1, this.player.z);
-    _v2.set(_v1.x + aimDirX * 140, Math.max(1.2, _v1.y + aimDirY * 140), _v1.z + aimDirZ * 140);
-    const aimWallT = segmentCityImpact(_v1, _v2, this.layout.aabbs, false);
-    if (aimWallT >= 0) _v2.lerpVectors(_v1, _v2, aimWallT);
-
+    this.resolveBarrelAimPoint(this.aimYaw, this.aimPitch, _v2);
     _proj.copy(_v2).project(this.camera);
     const aimReticleX = THREE.MathUtils.clamp((_proj.x + 1) * 0.5, 0.08, 0.92);
     const aimReticleY = THREE.MathUtils.clamp((1 - _proj.y) * 0.5, 0.08, 0.92);
 
-    const barDirX = -Math.sin(this.player.turretYaw) * Math.cos(this.player.barrelPitch);
-    const barDirY = Math.sin(this.player.barrelPitch);
-    const barDirZ = -Math.cos(this.player.turretYaw) * Math.cos(this.player.barrelPitch);
-    _v3.set(_v1.x + barDirX * 140, Math.max(1.2, _v1.y + barDirY * 140), _v1.z + barDirZ * 140);
-    const barWallT = segmentCityImpact(_v1, _v3, this.layout.aabbs, false);
-    if (barWallT >= 0) _v3.lerpVectors(_v1, _v3, barWallT);
-
+    this.resolveBarrelAimPoint(this.player.turretYaw, this.player.barrelPitch, _v3);
     _proj.copy(_v3).project(this.camera);
     const barrelInFront = _proj.z >= -1 && _proj.z <= 1;
     const barrelReticleX = barrelInFront
@@ -1658,7 +1809,13 @@ export class TankCombatEngine {
       });
 
       const dist = Math.hypot(u.x - this.player.x, u.z - this.player.z);
-      _proj.set(u.x, u.y + 2.6, u.z).project(this.camera);
+      _targetVec3.x = u.x;
+      _targetVec3.y = u.y + 1.8;
+      _targetVec3.z = u.z;
+      const inLineOfSight =
+        dist < 185 && hasCityLineOfSight(_shooterVec3, _targetVec3, this.layout.aabbs);
+
+      _proj.set(u.x, u.y + 3.05, u.z).project(this.camera);
       const inFront = _proj.z >= -1 && _proj.z <= 1;
       const sx = (_proj.x + 1) * 0.5;
       const sy = (1 - _proj.y) * 0.5;
@@ -1669,7 +1826,7 @@ export class TankCombatEngine {
       let leadVisible = false;
       if (inFront && isLocked && dist < 175) {
         _targetVec3.x = u.x;
-        _targetVec3.y = u.y + 1.8;
+        _targetVec3.y = u.y + 1.35;
         _targetVec3.z = u.z;
         _targetVel3.x = u.vx;
         _targetVel3.y = 0;
@@ -1697,6 +1854,7 @@ export class TankCombatEngine {
         screenY: sy,
         inFront,
         onScreen,
+        inLineOfSight,
         distance: Math.round(dist),
         hpRatio: Math.max(0, u.hp / u.maxHp),
         isLocked,

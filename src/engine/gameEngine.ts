@@ -24,6 +24,7 @@ import {
   type FlightState,
 } from './flightPhysics';
 import {
+  buildCommandBaseMesh,
   buildEnemyJetMesh,
   buildPlayerJetMesh,
   buildSamBatteryMesh,
@@ -34,8 +35,11 @@ import {
   type SurfaceVisualRig,
 } from './meshes';
 import {
+  createStrikeSurfaceUnits,
   createSurfaceWaveUnits,
+  getStrikeMissionDefinition,
   updateSurfaceUnit,
+  type StrikeMissionDef,
   type SurfaceActionEvents,
   type SurfaceUnit,
 } from './surfaceUnits';
@@ -46,10 +50,12 @@ import type {
   DifficultyLevel,
   GamePhase,
   HudSnapshot,
+  JetSubMode,
   KillFeedItem,
   ProjectedIncomingMissile,
   ProjectedTarget,
   RadarBlip,
+  StrikeObjectiveInfo,
   WaveAnnouncement,
 } from './types';
 
@@ -207,6 +213,9 @@ export class AirCombatEngine {
   private enemyFlareNoticeTimer = 0;
   private samMaskNoticeTimer = 0;
   private difficulty: DifficultyLevel = 'normal';
+  private jetSubMode: JetSubMode = 'dogfight';
+  private currentStrikeMission: StrikeMissionDef | null = null;
+  private strikeObjectiveTotal = 0;
 
   // Radar lock-on
   private lockTargetId: number | null = null;
@@ -548,6 +557,15 @@ export class AirCombatEngine {
     return this.difficulty;
   }
 
+  public setJetSubMode(subMode: JetSubMode): void {
+    this.jetSubMode = subMode;
+    this.emitHudSnapshot();
+  }
+
+  public getJetSubMode(): JetSubMode {
+    return this.jetSubMode;
+  }
+
   public getPhase(): GamePhase {
     return this.phase;
   }
@@ -558,13 +576,19 @@ export class AirCombatEngine {
     this.emitHudSnapshot();
   }
 
-  public startNewGame(overrideDifficulty?: DifficultyLevel): void {
+  public startNewGame(overrideDifficulty?: DifficultyLevel, overrideSubMode?: JetSubMode): void {
     if (overrideDifficulty) {
       this.difficulty = overrideDifficulty;
+    }
+    if (overrideSubMode) {
+      this.jetSubMode = overrideSubMode;
     }
     this.audio.unlock();
     this.clearInputs();
     this.clearEntities();
+    this.currentStrikeMission = null;
+    this.strikeObjectiveTotal = 0;
+    this.nextWaveDelay = 0;
 
     this.flight = createInitialFlightState();
     this.playerRig.group.visible = true;
@@ -671,9 +695,87 @@ export class AirCombatEngine {
     this.particleMesh.instanceMatrix.needsUpdate = true;
   }
 
+  private buildSurfaceRig(type: SurfaceUnit['type']): SurfaceVisualRig {
+    if (type === 'command') return buildCommandBaseMesh();
+    if (type === 'sam') return buildSamBatteryMesh();
+    return buildWarshipMesh();
+  }
+
   private spawnWave(waveNum: number): void {
-    const def = getWaveDefinition(waveNum);
     this.wave = waveNum;
+
+    if (this.jetSubMode === 'strike') {
+      const mission = getStrikeMissionDefinition(waveNum);
+      this.currentStrikeMission = mission;
+
+      // Clear leftover surface structures from previous strike mission before spawning next sector
+      for (let i = 0; i < this.surfaceUnits.length; i++) {
+        this.scene.remove(this.surfaceUnits[i].rig.group);
+      }
+      this.surfaceUnits.length = 0;
+
+      const freshSurface = createStrikeSurfaceUnits(
+        mission,
+        this.nextSurfaceId,
+        this.difficulty,
+        getTerrainHeight,
+      );
+      this.nextSurfaceId += freshSurface.length;
+
+      let primarySurfaceCount = 0;
+      for (let i = 0; i < freshSurface.length; i++) {
+        const su = freshSurface[i];
+        if (su.isPrimaryObjective) primarySurfaceCount++;
+        const rig = this.buildSurfaceRig(su.type);
+        rig.group.position.copy(su.position);
+        rig.group.rotation.y = su.headingRad;
+        this.scene.add(rig.group);
+        this.surfaceUnits.push({ unit: su, rig });
+      }
+
+      const airCount = mission.airUnits.length;
+      for (let i = 0; i < airCount; i++) {
+        const archetype = mission.airUnits[i];
+        const spread = (i - (airCount - 1) / 2) * 0.34;
+        const headingAngle = -Math.PI / 2 + spread + (Math.random() - 0.5) * 0.14;
+        const dist = 840 + i * 125;
+        const sx = this.flight.position.x + Math.cos(headingAngle) * dist;
+        const sz = this.flight.position.z + Math.sin(headingAngle) * dist;
+        const groundH = getTerrainHeight(sx, sz);
+        const sy = Math.max(265, groundH + 155) + (i % 3) * 45;
+
+        const unit = createEnemyUnit(
+          this.nextEnemyId++,
+          archetype,
+          new THREE.Vector3(sx, sy, sz),
+          (i / Math.max(1, airCount)) * Math.PI * 2,
+          waveNum,
+          this.difficulty,
+        );
+        const rig = buildEnemyJetMesh(archetype);
+        rig.group.position.copy(unit.position);
+        rig.group.quaternion.copy(unit.quaternion);
+        this.scene.add(rig.group);
+        this.enemies.push({ unit, rig });
+      }
+
+      this.strikeObjectiveTotal =
+        mission.objectiveKind === 'air' ? airCount : Math.max(1, primarySurfaceCount);
+
+      this.waveBanner = {
+        wave: waveNum,
+        titleFa: mission.titleFa,
+        subtitleFa: mission.subtitleFa,
+        remaining: this.strikeObjectiveTotal,
+      };
+      this.waveBannerTimer = 4.2;
+      return;
+    }
+
+    // Standard Dogfight Survival (نبرد آزاد) — exact existing endless mode
+    this.currentStrikeMission = null;
+    this.strikeObjectiveTotal = 0;
+    const def = getWaveDefinition(waveNum);
     this.waveBanner = {
       wave: waveNum,
       titleFa: def.titleFa,
@@ -720,7 +822,7 @@ export class AirCombatEngine {
       this.nextSurfaceId += freshSurface.length;
       for (let i = 0; i < freshSurface.length; i++) {
         const su = freshSurface[i];
-        const rig = su.type === 'sam' ? buildSamBatteryMesh() : buildWarshipMesh();
+        const rig = this.buildSurfaceRig(su.type);
         rig.group.position.copy(su.position);
         rig.group.rotation.y = su.headingRad;
         this.scene.add(rig.group);
@@ -1378,7 +1480,11 @@ export class AirCombatEngine {
           _surfaceEvents.launchDir,
           false,
           null,
-          su.type === 'sam' ? 'موشک پدافند' : 'موشک ناو',
+          su.type === 'sam'
+            ? 'موشک پدافند'
+            : su.type === 'command'
+            ? 'موشک مقر راداری'
+            : 'موشک ناو',
           MISSILE_SPEED * 0.9,
           172,
         );
@@ -1398,14 +1504,49 @@ export class AirCombatEngine {
     this.updateFlares(dt);
     this.updateParticles(dt);
 
-    // 7. Endless Wave Progression with Field Resupply & Hull Repair
-    if (this.enemies.length === 0) {
+    // 7. Endless Wave Progression (Dogfight: clear air enemies | Strike: destroy primary objective)
+    let waveCleared = false;
+    if (this.jetSubMode === 'strike' && this.currentStrikeMission) {
+      if (this.currentStrikeMission.objectiveKind === 'air') {
+        waveCleared = this.enemies.length === 0;
+      } else {
+        let primaryAlive = 0;
+        for (let i = 0; i < this.surfaceUnits.length; i++) {
+          if (this.surfaceUnits[i].unit.alive && this.surfaceUnits[i].unit.isPrimaryObjective) {
+            primaryAlive++;
+          }
+        }
+        waveCleared = primaryAlive === 0;
+      }
+    } else {
+      waveCleared = this.enemies.length === 0;
+    }
+
+    if (waveCleared) {
       if (this.nextWaveDelay <= 0) {
         this.nextWaveDelay = 2.6;
         this.audio.playWaveClear();
         this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 30);
         this.missilesReady = Math.min(this.missilesMax, this.missilesReady + 2);
         this.flaresReady = Math.min(this.flaresMax, this.flaresReady + 1);
+        if (this.jetSubMode === 'strike' && this.currentStrikeMission) {
+          const bonus = 400;
+          this.score += bonus;
+          if (this.score > this.highScore) {
+            this.highScore = this.score;
+            try {
+              window.localStorage.setItem(HIGH_SCORE_KEY, String(this.highScore));
+            } catch {
+              // ignore
+            }
+          }
+          this.killFeed = {
+            id: this.killFeedSeq++,
+            textFa: `ماموریت موج تکمیل شد — اعزام به هدف بعدی`,
+            points: bonus,
+          };
+          this.killFeedTimer = 2.6;
+        }
       } else {
         this.nextWaveDelay -= dt;
         if (this.nextWaveDelay <= 0) {
@@ -2031,6 +2172,11 @@ export class AirCombatEngine {
 
     const bulletSpeed = PLAYER_BULLET_SPEED + this.flight.speed * 0.35;
 
+    const isAirObjective =
+      this.jetSubMode === 'strike' && this.currentStrikeMission?.objectiveKind === 'air';
+    let primaryObjectiveRemaining = 0;
+    let nearestPrimaryDist = Infinity;
+
     let aliveAirCount = 0;
     for (let i = 0; i < this.enemies.length; i++) {
       const u = this.enemies[i].unit;
@@ -2040,6 +2186,10 @@ export class AirCombatEngine {
       const dx = u.position.x - this.flight.position.x;
       const dz = u.position.z - this.flight.position.z;
       const dist = u.position.distanceTo(this.flight.position);
+      if (isAirObjective) {
+        primaryObjectiveRemaining++;
+        if (dist < nearestPrimaryDist) nearestPrimaryDist = dist;
+      }
 
       const relRight = (dx * rx + dz * rz) / RADAR_RANGE;
       const relFwd = (dx * fx + dz * fz) / RADAR_RANGE;
@@ -2053,6 +2203,7 @@ export class AirCombatEngine {
         y: relFwd * clampScale,
         type: u.archetype === 'ace' ? 'ace' : 'enemy',
         isLocked,
+        isPrimaryObjective: isAirObjective,
       });
 
       _proj.copy(u.position).project(this.camera);
@@ -2097,10 +2248,11 @@ export class AirCombatEngine {
         leadX,
         leadY,
         leadVisible,
+        isPrimaryObjective: isAirObjective,
       });
     }
 
-    // Project Ground SAM Sites & Naval Warships onto Radar & 3D HUD
+    // Project Ground SAM Sites, Command Bunkers & Naval Warships onto Radar & 3D HUD
     let aliveSurfaceCount = 0;
     for (let i = 0; i < this.surfaceUnits.length; i++) {
       const su = this.surfaceUnits[i].unit;
@@ -2111,6 +2263,11 @@ export class AirCombatEngine {
       const dz = su.position.z - this.flight.position.z;
       _v1.set(su.position.x, su.position.y + 8, su.position.z);
       const dist = _v1.distanceTo(this.flight.position);
+      const isPrimary = Boolean(su.isPrimaryObjective);
+      if (isPrimary) {
+        primaryObjectiveRemaining++;
+        if (dist < nearestPrimaryDist) nearestPrimaryDist = dist;
+      }
 
       const relRight = (dx * rx + dz * rz) / RADAR_RANGE;
       const relFwd = (dx * fx + dz * fz) / RADAR_RANGE;
@@ -2124,6 +2281,7 @@ export class AirCombatEngine {
         y: relFwd * clampScale,
         type: su.type,
         isLocked,
+        isPrimaryObjective: isPrimary,
       });
 
       _proj.copy(_v1).project(this.camera);
@@ -2132,8 +2290,8 @@ export class AirCombatEngine {
       const sy = (1 - _proj.y) * 0.5;
       const onScreen = inFront && sx >= 0.04 && sx <= 0.96 && sy >= 0.06 && sy <= 0.94;
 
-      // Only show on-screen or nearby (<1550m) surface markers so off-screen rim stays uncluttered
-      if (onScreen || dist < 1550 || isLocked) {
+      // Always project primary Strike Mission objectives so player can navigate to them from any range
+      if (onScreen || dist < 1550 || isLocked || isPrimary) {
         targets.push({
           id: su.id,
           archetype: su.type,
@@ -2151,9 +2309,24 @@ export class AirCombatEngine {
           leadX: sx,
           leadY: sy,
           leadVisible: false,
+          isPrimaryObjective: isPrimary,
         });
       }
     }
+
+    const strikeObjective: StrikeObjectiveInfo | null =
+      this.jetSubMode === 'strike' && this.currentStrikeMission
+        ? {
+            wave: this.wave,
+            titleFa: this.currentStrikeMission.objectiveTitleFa,
+            targetLabelFa: this.currentStrikeMission.targetLabelFa,
+            remaining: primaryObjectiveRemaining,
+            total: Math.max(1, this.strikeObjectiveTotal),
+            distanceM: Number.isFinite(nearestPrimaryDist)
+              ? Math.round(nearestPrimaryDist)
+              : null,
+          }
+        : null;
 
     // Add incoming enemy/SAM/warship missiles to Radar AND 3D HUD Missile Trackers
     for (let i = 0; i < MISSILE_POOL_SIZE; i++) {
@@ -2196,6 +2369,8 @@ export class AirCombatEngine {
     this.onHudUpdate({
       phase: this.phase,
       difficulty: this.difficulty,
+      jetSubMode: this.jetSubMode,
+      strikeObjective,
       speedKmh: Math.round(this.flight.speed * 3.6),
       altitudeM: Math.max(0, Math.round(this.flight.position.y)),
       aglM: Math.round(aglM),

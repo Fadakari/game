@@ -28,6 +28,9 @@ export const TANK_PHYSICS_CONFIG = {
   hullRadius: 3.1,
   cannonReloadSec: 2.05,
   shellSpeed: 145,
+  shellGravity: 9.8,
+  minBarrelPitch: -0.34, // ~-19.5 deg deep close-range gun depression
+  maxBarrelPitch: 0.30, // ~+17.2 deg elevation
   mgBulletSpeed: 225,
   atgmSpeed: 54,
 };
@@ -297,11 +300,45 @@ export function stepTurretAim(
     state.turretYaw = normalizeAngle(state.turretYaw + Math.sign(diff) * maxStep);
   }
 
-  const clampedPitch = Math.max(-0.14, Math.min(0.28, targetPitch));
-  const pitchAlpha = 1 - Math.exp(-10 * clampedDt);
+  const clampedPitch = Math.max(
+    TANK_PHYSICS_CONFIG.minBarrelPitch,
+    Math.min(TANK_PHYSICS_CONFIG.maxBarrelPitch, targetPitch),
+  );
+  const pitchAlpha = 1 - Math.exp(-14 * clampedDt);
   state.barrelPitch += (clampedPitch - state.barrelPitch) * pitchAlpha;
 
   return Math.abs(normalizeAngle(targetWorldYaw - state.turretYaw));
+}
+
+/**
+ * Pure zero-allocation ballistic convergence solver for the tank's 120mm main cannon.
+ * Computes the normalized launch vector from muzzle to targetPoint compensating for gravity drop
+ * so close-range shots depress cleanly into enemy hulls without overshooting turrets.
+ */
+export function computeTankBallisticFireDir(
+  muzzle: Vec3,
+  targetPoint: Vec3,
+  shellSpeed: number,
+  gravity: number,
+  out: Vec3,
+): void {
+  const dx = targetPoint.x - muzzle.x;
+  const dy = targetPoint.y - muzzle.y;
+  const dz = targetPoint.z - muzzle.z;
+  const dist = Math.hypot(dx, dy, dz);
+  if (dist < 0.01) {
+    out.x = 0;
+    out.y = 0;
+    out.z = -1;
+    return;
+  }
+  const flightTime = dist / Math.max(1, shellSpeed);
+  const dropCompY = 0.5 * gravity * flightTime * flightTime;
+  const aimY = dy + dropCompY;
+  const len = Math.hypot(dx, aimY, dz) || 1;
+  out.x = dx / len;
+  out.y = aimY / len;
+  out.z = dz / len;
 }
 
 /**

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DIFFICULTY_PROFILES } from './enemyAI';
-import { getTerrainHeight } from './terrain';
-import type { DifficultyLevel, SurfaceUnitType, Vec3 } from './types';
+import { getCoastlineX, getRiverCenterX, getTerrainHeight } from './terrain';
+import type { DifficultyLevel, EnemyArchetype, SurfaceUnitType, Vec3 } from './types';
 
 export interface SurfaceUnit {
   id: number;
@@ -24,6 +24,11 @@ export interface SurfaceUnit {
   patrolRadius: number;
   patrolAngle: number;
   patrolSpeed: number;
+  isRiverPatrol?: boolean;
+  riverZMin?: number;
+  riverZMax?: number;
+  riverDir?: number;
+  isPrimaryObjective?: boolean;
   hitFlashTimer: number;
   alive: boolean;
 }
@@ -36,6 +41,19 @@ export interface SurfaceActionEvents {
   lockBrokenByTerrain: boolean;
 }
 
+export interface StrikeMissionDef {
+  wave: number;
+  titleFa: string;
+  subtitleFa: string;
+  objectiveTitleFa: string;
+  targetLabelFa: string;
+  objectiveKind: 'command' | 'sam' | 'warship' | 'air';
+  airUnits: EnemyArchetype[];
+  commandCount: number;
+  samCount: number;
+  warshipCount: number;
+}
+
 interface SamPlacementSite {
   x: number;
   z: number;
@@ -46,24 +64,39 @@ interface WarshipPatrolZone {
   cz: number;
   radius: number;
   startAngle: number;
+  isRiver?: boolean;
+  zMin?: number;
+  zMax?: number;
 }
 
-// Strategic high-ground island ridges & valley overlooks around the combat archipelago
+// Strategic mainland high-ground ridges & valley overlooks across the continent
 const SAM_SITES: ReadonlyArray<SamPlacementSite> = [
-  { x: -355, z: -960 }, // West Ridge overlooking the Northern Gorge
+  { x: -420, z: -960 }, // West Ridge overlooking the Northern Gorge
   { x: 465, z: -1210 }, // Northeast Twin Peak Battery
-  { x: -1120, z: -480 }, // Western Mountain Overlook
-  { x: 1040, z: -380 }, // Eastern Volcanic Overlook
-  { x: -720, z: 890 }, // Southwest Ridge
-  { x: 820, z: 980 }, // Southeast Island Battery
+  { x: -1160, z: -480 }, // Western Mountain Overlook
+  { x: 640, z: -380 }, // Eastern Mainland Bluff
+  { x: -860, z: 890 }, // Southwest Plateau Ridge
+  { x: 520, z: 1120 }, // Southeast Highland Battery
 ];
 
-// Open-ocean patrol circuits verified clear of island coastlines (360-degree deep water)
+// Fortified Radar Command Bunkers placed on prominent continental plateaus
+const COMMAND_SITES: ReadonlyArray<SamPlacementSite> = [
+  { x: -560, z: -840 }, // Central-North Command Ridge (directly ahead-left of spawn)
+  { x: -1240, z: -240 }, // Western Cordillera Radar Fortress
+  { x: 420, z: -1180 }, // Northeast High Plateau Command Bunker
+  { x: -540, z: 1080 }, // Southern Mainland Relay Command
+];
+
+// Enemy Naval Destroyer patrol zones: wide winding river channel + eastern coastal sea
 const WARSHIP_ZONES: ReadonlyArray<WarshipPatrolZone> = [
-  { cx: 280, cz: -460, radius: 115, startAngle: 0.4 },
-  { cx: -320, cz: 320, radius: 120, startAngle: 1.2 },
-  { cx: 340, cz: 340, radius: 125, startAngle: 2.8 },
-  { cx: -480, cz: -1580, radius: 130, startAngle: 0.9 },
+  // River Destroyer patrolling the wide winding central river channel
+  { cx: 0, cz: -460, radius: 75, startAngle: 0.4, isRiver: true, zMin: -950, zMax: 340 },
+  // Eastern Coastal Sea Destroyer patrolling off the eastern continental coastline
+  { cx: 1540, cz: -380, radius: 145, startAngle: 1.2 },
+  // Southeastern Coastal Bay Destroyer
+  { cx: 1480, cz: 680, radius: 140, startAngle: 2.6 },
+  // Northern River Mouth / Strait Destroyer
+  { cx: 1580, cz: -1280, radius: 135, startAngle: 0.9 },
 ];
 
 export const SURFACE_SPECS: Record<
@@ -99,12 +132,97 @@ export const SURFACE_SPECS: Record<
     lockDurationSec: 3.4,
     missileCooldownSec: 12.5,
   },
+  command: {
+    nameFa: 'مقر راداری دشمن',
+    maxHp: 240,
+    hitRadius: 21,
+    capsuleHalfLength: 0,
+    scoreValue: 850,
+    radarRange: 1650,
+    lockDurationSec: 3.6,
+    missileCooldownSec: 13.5,
+  },
 };
 
 /**
- * Evaluates whether a ground SAM site or naval destroyer has clear radar line-of-sight
- * to the player's jet. Samples terrain elevation along the 3D ray AND checks canyon/valley
- * masking so diving low inside mountain gorges breaks ground radar lock!
+ * Returns the objective-driven Strike Mission definition for Jet Sub-Mode 2 (عملیات تهاجمی).
+ */
+export function getStrikeMissionDefinition(wave: number): StrikeMissionDef {
+  const cycle = ((wave - 1) % 4) + 1;
+  const faWave = wave.toString().replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
+  const extraEscort = wave > 4 ? 1 : 0;
+
+  if (cycle === 1) {
+    const commandCount = wave > 4 ? 2 : 1;
+    return {
+      wave,
+      titleFa: `عملیات موج ${faWave} — انهدام مقر راداری`,
+      subtitleFa: 'مقر فرماندهی راداری دشمن روی ارتفاعات خشکی را نابود کنید',
+      objectiveTitleFa: 'انهدام مقر راداری دشمن',
+      targetLabelFa: 'مقر راداری',
+      objectiveKind: 'command',
+      airUnits: extraEscort > 0 ? ['recon', 'interceptor', 'interceptor'] : ['recon', 'recon'],
+      commandCount,
+      samCount: 1 + extraEscort,
+      warshipCount: 1,
+    };
+  }
+  if (cycle === 2) {
+    return {
+      wave,
+      titleFa: `عملیات موج ${faWave} — سرکوب پدافند`,
+      subtitleFa: 'شبکه پدافند موشکی مستقر در دره‌ها و ارتفاعات را خنثی کنید',
+      objectiveTitleFa: 'نابودی شبکه پدافند موشکی',
+      targetLabelFa: 'پدافند موشکی',
+      objectiveKind: 'sam',
+      airUnits:
+        extraEscort > 0
+          ? ['interceptor', 'interceptor', 'heavy']
+          : ['recon', 'interceptor', 'interceptor'],
+      commandCount: 0,
+      samCount: 3,
+      warshipCount: 1,
+    };
+  }
+  if (cycle === 3) {
+    const warshipCount = wave > 4 ? 2 : 1;
+    return {
+      wave,
+      titleFa: `عملیات موج ${faWave} — شکار ناو جنگی`,
+      subtitleFa: 'ناو جنگی گشت‌زن در رودخانه بزرگ و دریای ساحلی را غرق کنید',
+      objectiveTitleFa: 'انهدام ناو جنگی دشمن',
+      targetLabelFa: 'ناو جنگی',
+      objectiveKind: 'warship',
+      airUnits:
+        extraEscort > 0
+          ? ['interceptor', 'heavy', 'heavy']
+          : ['interceptor', 'interceptor', 'heavy'],
+      commandCount: 0,
+      samCount: 2,
+      warshipCount,
+    };
+  }
+  return {
+    wave,
+    titleFa: `عملیات موج ${faWave} — شکستن خط دفاعی آس`,
+    subtitleFa: 'اسکادران جنگنده‌های نخبه دشمن را برای باز کردن آسمان منهدم کنید',
+    objectiveTitleFa: 'شکستن خط دفاعی جنگنده‌های دشمن',
+    targetLabelFa: 'جنگنده دشمن',
+    objectiveKind: 'air',
+    airUnits:
+      extraEscort > 0
+        ? ['ace', 'ace', 'heavy', 'interceptor']
+        : ['ace', 'heavy', 'interceptor', 'interceptor'],
+    commandCount: 0,
+    samCount: 2,
+    warshipCount: 1,
+  };
+}
+
+/**
+ * Evaluates whether a ground SAM site, command bunker, or naval destroyer has clear radar
+ * line-of-sight to the player's jet. Samples terrain elevation along the 3D ray AND checks
+ * canyon/valley masking so diving low inside mountain gorges breaks ground radar lock!
  */
 export function hasTerrainLineOfSight(
   radarOrigin: Vec3,
@@ -133,8 +251,6 @@ export function hasTerrainLineOfSight(
   }
 
   // 2. Canyon / Valley Terrain Masking:
-  // If player is flying low (AGL < 95m) tucked below nearby flanking cliff ridges,
-  // ground clutter & canyon walls mask the radar return!
   if (horizDist > 260) {
     const playerGround = heightSampler(playerPos.x, playerPos.z);
     const agl = playerPos.y - playerGround;
@@ -161,9 +277,9 @@ export function hasTerrainLineOfSight(
 }
 
 /**
- * Finds an exact dry-land coordinate on or near a candidate SAM site using getTerrainHeight.
+ * Finds an exact dry-land coordinate on or near a candidate mainland site using getTerrainHeight.
  */
-function resolveSamPosition(
+function resolveGroundSitePosition(
   site: SamPlacementSite,
   heightSampler: (x: number, z: number) => number,
 ): THREE.Vector3 {
@@ -171,38 +287,95 @@ function resolveSamPosition(
   let bestZ = site.z;
   let bestH = heightSampler(site.x, site.z);
   if (bestH < 18) {
-    // Search nearby ring for elevated dry ridge
-    for (let a = 0; a < 8; a++) {
-      const ang = (a / 8) * Math.PI * 2;
-      const tx = site.x + Math.cos(ang) * 95;
-      const tz = site.z + Math.sin(ang) * 95;
-      const th = heightSampler(tx, tz);
-      if (th > bestH) {
-        bestH = th;
-        bestX = tx;
-        bestZ = tz;
+    for (let r = 110; r <= 260; r += 75) {
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2;
+        const tx = site.x + Math.cos(ang) * r;
+        const tz = site.z + Math.sin(ang) * r;
+        const th = heightSampler(tx, tz);
+        if (th > bestH) {
+          bestH = th;
+          bestX = tx;
+          bestZ = tz;
+        }
       }
+      if (bestH >= 22) break;
     }
   }
   return new THREE.Vector3(bestX, Math.max(12, bestH), bestZ);
 }
 
 /**
- * Resolves an open-ocean coordinate for a warship patrol zone (guarantees h === 0).
+ * Resolves a verified open-water coordinate inside either the wide river channel
+ * or the eastern coastal sea (guarantees h <= 0.1).
  */
-function resolveOceanPoint(
-  cx: number,
-  cz: number,
-  radius: number,
-  angle: number,
+function resolveWaterPoint(
+  zone: WarshipPatrolZone,
   heightSampler: (x: number, z: number) => number,
 ): { x: number; z: number } {
-  const x = cx + Math.cos(angle) * radius;
-  const z = cz + Math.sin(angle) * radius;
+  if (zone.isRiver) {
+    const rx = getRiverCenterX(zone.cz);
+    if (heightSampler(rx, zone.cz) <= 0.1) {
+      return { x: rx, z: zone.cz };
+    }
+  }
+  const x = zone.cx + Math.cos(zone.startAngle) * zone.radius;
+  const z = zone.cz + Math.sin(zone.startAngle) * zone.radius;
   if (heightSampler(x, z) <= 0.1) {
     return { x, z };
   }
-  return { x: cx, z: cz };
+  if (heightSampler(zone.cx, zone.cz) <= 0.1) {
+    return { x: zone.cx, z: zone.cz };
+  }
+  // Safe eastern sea fallback well offshore of coastline
+  const safeSeaX = getCoastlineX(zone.cz) + 360;
+  return { x: safeSeaX, z: zone.cz };
+}
+
+function buildSurfaceUnitRecord(
+  id: number,
+  type: SurfaceUnitType,
+  pos: THREE.Vector3,
+  wave: number,
+  difficulty: DifficultyLevel,
+  indexOffset: number,
+  isPrimaryObjective: boolean,
+  zone?: WarshipPatrolZone,
+): SurfaceUnit {
+  const spec = SURFACE_SPECS[type];
+  const diff = DIFFICULTY_PROFILES[difficulty];
+  const hpScale = 1 + Math.min(0.4, (wave - 1) * 0.08);
+  const maxHp = Math.round(spec.maxHp * hpScale);
+
+  return {
+    id,
+    type,
+    nameFa: spec.nameFa,
+    position: pos,
+    velocity: new THREE.Vector3(0, 0, 0),
+    headingRad: zone ? zone.startAngle + Math.PI * 0.5 : (indexOffset * 1.4) % (Math.PI * 2),
+    radarAngle: indexOffset * 0.9,
+    hp: maxHp,
+    maxHp,
+    hitRadius: spec.hitRadius,
+    capsuleHalfLength: spec.capsuleHalfLength,
+    scoreValue: spec.scoreValue,
+    lockProgress: 0,
+    missileCooldown: (5.8 + indexOffset * 2.4) * diff.enemyFireCooldownScale,
+    wasLockingPlayer: false,
+    patrolCenterX: zone ? zone.cx : pos.x,
+    patrolCenterZ: zone ? zone.cz : pos.z,
+    patrolRadius: zone ? zone.radius : 0,
+    patrolAngle: zone ? zone.startAngle : 0,
+    patrolSpeed: type === 'warship' ? 12 : 0,
+    isRiverPatrol: Boolean(zone?.isRiver),
+    riverZMin: zone?.zMin,
+    riverZMax: zone?.zMax,
+    riverDir: indexOffset % 2 === 0 ? -1 : 1,
+    isPrimaryObjective,
+    hitFlashTimer: 0,
+    alive: true,
+  };
 }
 
 export function createSurfaceWaveUnits(
@@ -215,79 +388,104 @@ export function createSurfaceWaveUnits(
   let nextId = startId;
 
   const samCount = Math.min(SAM_SITES.length, wave === 1 ? 2 : Math.min(4, 1 + wave));
-  const warshipCount = Math.min(WARSHIP_ZONES.length, wave === 1 ? 1 : Math.min(3, Math.ceil(wave / 2)));
-
-  const diff = DIFFICULTY_PROFILES[difficulty];
-  const hpScale = 1 + Math.min(0.4, (wave - 1) * 0.08);
+  const warshipCount = Math.min(
+    WARSHIP_ZONES.length,
+    wave === 1 ? 1 : Math.min(3, Math.ceil(wave / 2)),
+  );
 
   for (let i = 0; i < samCount; i++) {
     const site = SAM_SITES[(i + (wave - 1)) % SAM_SITES.length];
-    const pos = resolveSamPosition(site, heightSampler);
-    const spec = SURFACE_SPECS.sam;
-    const maxHp = Math.round(spec.maxHp * hpScale);
-    units.push({
-      id: nextId++,
-      type: 'sam',
-      nameFa: spec.nameFa,
-      position: pos,
-      velocity: new THREE.Vector3(0, 0, 0),
-      headingRad: (i * 1.4) % (Math.PI * 2),
-      radarAngle: i * 1.1,
-      hp: maxHp,
-      maxHp,
-      hitRadius: spec.hitRadius,
-      capsuleHalfLength: spec.capsuleHalfLength,
-      scoreValue: spec.scoreValue,
-      lockProgress: 0,
-      missileCooldown: (5.5 + i * 2.4) * diff.enemyFireCooldownScale,
-      wasLockingPlayer: false,
-      patrolCenterX: pos.x,
-      patrolCenterZ: pos.z,
-      patrolRadius: 0,
-      patrolAngle: 0,
-      patrolSpeed: 0,
-      hitFlashTimer: 0,
-      alive: true,
-    });
+    const pos = resolveGroundSitePosition(site, heightSampler);
+    units.push(buildSurfaceUnitRecord(nextId++, 'sam', pos, wave, difficulty, i, false));
   }
 
   for (let i = 0; i < warshipCount; i++) {
     const zone = WARSHIP_ZONES[(i + (wave - 1)) % WARSHIP_ZONES.length];
-    const spec = SURFACE_SPECS.warship;
-    const pt = resolveOceanPoint(zone.cx, zone.cz, zone.radius, zone.startAngle, heightSampler);
-    const maxHp = Math.round(spec.maxHp * hpScale);
-    units.push({
-      id: nextId++,
-      type: 'warship',
-      nameFa: spec.nameFa,
-      position: new THREE.Vector3(pt.x, 0, pt.z),
-      velocity: new THREE.Vector3(0, 0, 0),
-      headingRad: zone.startAngle + Math.PI * 0.5,
-      radarAngle: i * 0.8,
-      hp: maxHp,
-      maxHp,
-      hitRadius: spec.hitRadius,
-      capsuleHalfLength: spec.capsuleHalfLength,
-      scoreValue: spec.scoreValue,
-      lockProgress: 0,
-      missileCooldown: (7.5 + i * 2.8) * diff.enemyFireCooldownScale,
-      wasLockingPlayer: false,
-      patrolCenterX: zone.cx,
-      patrolCenterZ: zone.cz,
-      patrolRadius: zone.radius,
-      patrolAngle: zone.startAngle,
-      patrolSpeed: 12, // ~43 km/h naval destroyer cruise
-      hitFlashTimer: 0,
-      alive: true,
-    });
+    const pt = resolveWaterPoint(zone, heightSampler);
+    units.push(
+      buildSurfaceUnitRecord(
+        nextId++,
+        'warship',
+        new THREE.Vector3(pt.x, 0, pt.z),
+        wave,
+        difficulty,
+        i,
+        false,
+        zone,
+      ),
+    );
   }
 
   return units;
 }
 
 /**
- * Updates a single SAM battery or Naval Warship (zero allocations inside loop).
- * Handles warship ocean patrolling, rotating radar dish, terrain-masked radar lock-on,
+ * Spawns surface units tailored for a Tactical Strike Mission wave, tagging primary objective targets.
+ */
+export function createStrikeSurfaceUnits(
+  mission: StrikeMissionDef,
+  startId: number,
+  difficulty: DifficultyLevel = 'normal',
+  heightSampler: (x: number, z: number) => number = getTerrainHeight,
+): SurfaceUnit[] {
+  const units: SurfaceUnit[] = [];
+  let nextId = startId;
+
+  for (let i = 0; i < mission.commandCount; i++) {
+    const site = COMMAND_SITES[(i + (mission.wave - 1)) % COMMAND_SITES.length];
+    const pos = resolveGroundSitePosition(site, heightSampler);
+    units.push(
+      buildSurfaceUnitRecord(
+        nextId++,
+        'command',
+        pos,
+        mission.wave,
+        difficulty,
+        i,
+        mission.objectiveKind === 'command',
+      ),
+    );
+  }
+
+  for (let i = 0; i < mission.samCount; i++) {
+    const site = SAM_SITES[(i + (mission.wave - 1)) % SAM_SITES.length];
+    const pos = resolveGroundSitePosition(site, heightSampler);
+    units.push(
+      buildSurfaceUnitRecord(
+        nextId++,
+        'sam',
+        pos,
+        mission.wave,
+        difficulty,
+        i + 2,
+        mission.objectiveKind === 'sam',
+      ),
+    );
+  }
+
+  for (let i = 0; i < mission.warshipCount; i++) {
+    const zone = WARSHIP_ZONES[i % WARSHIP_ZONES.length];
+    const pt = resolveWaterPoint(zone, heightSampler);
+    units.push(
+      buildSurfaceUnitRecord(
+        nextId++,
+        'warship',
+        new THREE.Vector3(pt.x, 0, pt.z),
+        mission.wave,
+        difficulty,
+        i + 4,
+        mission.objectiveKind === 'warship',
+        zone,
+      ),
+    );
+  }
+
+  return units;
+}
+
+/**
+ * Updates a single SAM battery, Command Bunker, or Naval Warship (zero allocations inside loop).
+ * Handles river-channel and coastal-sea patrolling, rotating radar dish, terrain-masked radar lock-on,
  * and surface-to-air missile launches.
  */
 export function updateSurfaceUnit(
@@ -309,28 +507,53 @@ export function updateSurfaceUnit(
     unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - clampedDt);
   }
 
-  unit.radarAngle = (unit.radarAngle + clampedDt * (unit.type === 'sam' ? 2.4 : 1.7)) % (Math.PI * 2);
+  unit.radarAngle =
+    (unit.radarAngle + clampedDt * (unit.type === 'warship' ? 1.7 : 2.35)) % (Math.PI * 2);
   unit.missileCooldown = Math.max(0, unit.missileCooldown - clampedDt);
 
-  // Naval warship smooth circular ocean patrol (avoiding land)
-  if (unit.type === 'warship' && unit.patrolRadius > 0) {
-    const angularSpeed = unit.patrolSpeed / unit.patrolRadius;
-    const nextAngle = unit.patrolAngle + angularSpeed * clampedDt;
-    const nx = unit.patrolCenterX + Math.cos(nextAngle) * unit.patrolRadius;
-    const nz = unit.patrolCenterZ + Math.sin(nextAngle) * unit.patrolRadius;
-    if (heightSampler(nx, nz) <= 0.1) {
+  // Naval warship smooth river-channel OR open-sea patrol (staying strictly in deep water)
+  if (unit.type === 'warship' && unit.patrolSpeed !== 0) {
+    if (unit.isRiverPatrol && unit.riverZMin !== undefined && unit.riverZMax !== undefined) {
+      const dir = unit.riverDir ?? -1;
       const prevX = unit.position.x;
       const prevZ = unit.position.z;
-      unit.patrolAngle = nextAngle;
-      unit.position.set(nx, 0, nz);
-      if (clampedDt > 1e-4) {
-        unit.velocity.set((nx - prevX) / clampedDt, 0, (nz - prevZ) / clampedDt);
+      let nextZ = prevZ + dir * Math.abs(unit.patrolSpeed) * clampedDt;
+      if (nextZ < unit.riverZMin) {
+        nextZ = unit.riverZMin;
+        unit.riverDir = 1;
+      } else if (nextZ > unit.riverZMax) {
+        nextZ = unit.riverZMax;
+        unit.riverDir = -1;
       }
-      unit.headingRad = Math.atan2(nx - prevX, nz - prevZ);
-    } else {
-      // Reverse patrol direction gracefully if touching shoal
-      unit.patrolSpeed = -unit.patrolSpeed;
-      unit.velocity.set(0, 0, 0);
+      const nextX = getRiverCenterX(nextZ);
+      if (heightSampler(nextX, nextZ) <= 0.1) {
+        unit.position.set(nextX, 0, nextZ);
+        if (clampedDt > 1e-4) {
+          unit.velocity.set((nextX - prevX) / clampedDt, 0, (nextZ - prevZ) / clampedDt);
+        }
+        unit.headingRad = Math.atan2(nextX - prevX, nextZ - prevZ);
+      } else {
+        unit.riverDir = -dir;
+        unit.velocity.set(0, 0, 0);
+      }
+    } else if (unit.patrolRadius > 0) {
+      const angularSpeed = unit.patrolSpeed / unit.patrolRadius;
+      const nextAngle = unit.patrolAngle + angularSpeed * clampedDt;
+      const nx = unit.patrolCenterX + Math.cos(nextAngle) * unit.patrolRadius;
+      const nz = unit.patrolCenterZ + Math.sin(nextAngle) * unit.patrolRadius;
+      if (heightSampler(nx, nz) <= 0.1) {
+        const prevX = unit.position.x;
+        const prevZ = unit.position.z;
+        unit.patrolAngle = nextAngle;
+        unit.position.set(nx, 0, nz);
+        if (clampedDt > 1e-4) {
+          unit.velocity.set((nx - prevX) / clampedDt, 0, (nz - prevZ) / clampedDt);
+        }
+        unit.headingRad = Math.atan2(nx - prevX, nz - prevZ);
+      } else {
+        unit.patrolSpeed = -unit.patrolSpeed;
+        unit.velocity.set(0, 0, 0);
+      }
     }
   }
 

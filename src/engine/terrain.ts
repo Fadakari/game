@@ -98,31 +98,28 @@ export function simplex2D(xin: number, yin: number): number {
 export const WORLD_RADIUS = 3800;
 export const PLAYABLE_RADIUS = 2900;
 
-interface IslandCenter {
+interface MountainRange {
   x: number;
   z: number;
-  radius: number;
+  radiusX: number;
+  radiusZ: number;
   peakHeight: number;
 }
 
-// Curated dramatic archipelago layout around an open spawn bay at (0, 0)
-// Guarantees a clear spawn runway over water with dramatic mountain silhouettes visible immediately ahead
-const ISLANDS: ReadonlyArray<IslandCenter> = [
-  // Iconic twin-peak landmark directly ahead (-Z) for dramatic spawn vista
-  { x: -160, z: -980, radius: 620, peakHeight: 315 },
-  { x: 460, z: -1250, radius: 520, peakHeight: 265 },
-  // Flanking western mountain chain
-  { x: -1180, z: -260, radius: 720, peakHeight: 340 },
-  { x: -940, z: 960, radius: 590, peakHeight: 255 },
-  // Eastern volcanic archipelago
-  { x: 1120, z: -180, radius: 680, peakHeight: 330 },
-  { x: 860, z: 1080, radius: 640, peakHeight: 280 },
-  // Southern atoll & distant outer peaks
-  { x: -120, z: 1420, radius: 560, peakHeight: 230 },
-  { x: -1950, z: -1600, radius: 760, peakHeight: 370 },
-  { x: 1850, z: -1750, radius: 720, peakHeight: 350 },
-  { x: 1920, z: 1620, radius: 700, peakHeight: 310 },
-  { x: -1880, z: 1750, radius: 690, peakHeight: 325 },
+// Major continental mountain ranges & highlands framing the river valley and coastal plain
+const MOUNTAIN_RANGES: ReadonlyArray<MountainRange> = [
+  // Twin landmark peaks flanking the Northern Gorge directly ahead of spawn (-Z)
+  { x: -390, z: -980, radiusX: 430, radiusZ: 620, peakHeight: 305 },
+  { x: 460, z: -1250, radiusX: 490, radiusZ: 540, peakHeight: 285 },
+  // Great Western Continental Mountain Cordillera
+  { x: -1520, z: -420, radiusX: 880, radiusZ: 1240, peakHeight: 365 },
+  { x: -1350, z: 1180, radiusX: 820, radiusZ: 920, peakHeight: 320 },
+  // Northern Border Alpine Range
+  { x: -1020, z: -1920, radiusX: 1100, radiusZ: 680, peakHeight: 375 },
+  { x: 640, z: -2050, radiusX: 880, radiusZ: 620, peakHeight: 330 },
+  // Southern Plateau & Forested Highlands
+  { x: -360, z: 1420, radiusX: 780, radiusZ: 640, peakHeight: 245 },
+  { x: 520, z: 1260, radiusX: 520, radiusZ: 560, peakHeight: 230 },
 ];
 
 interface CanyonCorridor {
@@ -134,17 +131,14 @@ interface CanyonCorridor {
   floorHeight: number;
 }
 
-// Flyable tactical mountain canyons & river gorges slicing cleanly through major islands
-// Lets pilots weave between towering cliffs to break enemy sightlines or ambush pursuers
+// Deep navigable tactical mountain canyons slicing cleanly through the mainland ranges
 const CANYONS: ReadonlyArray<CanyonCorridor> = [
   // Primary Northern Gorge slicing straight between the twin landmark peaks ahead of spawn
-  { ax: -170, az: -420, bx: -140, bz: -1580, halfWidth: 92, floorHeight: 16 },
-  // Western Ridge Valley Pass
-  { ax: -1780, az: -220, bx: -540, bz: -310, halfWidth: 98, floorHeight: 22 },
-  // Eastern Volcanic Split Canyon
-  { ax: 620, az: -700, bx: 1580, bz: 340, halfWidth: 95, floorHeight: 18 },
-  // Southern Coastal Strait
-  { ax: -620, az: 1120, bx: 480, bz: 1680, halfWidth: 96, floorHeight: 8 },
+  { ax: -170, az: -420, bx: -140, bz: -1620, halfWidth: 96, floorHeight: 16 },
+  // Western Continental Valley Pass
+  { ax: -2100, az: -320, bx: -680, bz: -380, halfWidth: 108, floorHeight: 24 },
+  // Southwest Canyon Cut
+  { ax: -1580, az: 780, bx: -540, bz: 1280, halfWidth: 104, floorHeight: 22 },
 ];
 
 function pointToSegmentDist(
@@ -167,58 +161,106 @@ function pointToSegmentDist(
 }
 
 /**
- * Deterministic multi-octave island terrain height in meters.
- * Returns 0 for open ocean and positive values for land/mountains,
- * with carved tactical canyons & mountain passes for low-altitude maneuvering.
- * Shared verbatim by terrain mesh generation, player exact collision, and AI terrain avoidance.
+ * Returns the X centerline of the wide winding continental river at a given Z coordinate.
+ * Flows from the northwest mountain highlands past the central delta bay (near x=0, z=0)
+ * out toward the southeastern coastal strait.
+ */
+export function getRiverCenterX(z: number): number {
+  // Smooth dramatic S-curve winding from northwest valley -> central delta bay -> southeast strait
+  const macroCurve = Math.sin(z * 0.00125) * 320 + Math.sin(z * 0.00055 + 0.4) * 165;
+  const zOffset = z > 120 ? (z - 120) * 0.16 : z < -260 ? (z + 260) * 0.78 : 0;
+  return macroCurve * 0.62 + zOffset - 22;
+}
+
+/**
+ * Returns the X coordinate of the eastern continental coastline at a given Z coordinate.
+ * Everything east of coastX(z) opens into the coastal sea for naval warship patrols.
+ */
+export function getCoastlineX(z: number): number {
+  return 980 + Math.sin(z * 0.00145 + 0.6) * 240 + Math.cos(z * 0.00075) * 150;
+}
+
+/**
+ * Deterministic continental terrain height in meters:
+ * - Vast mainland terrain (plains, forested valleys, plateaus, rugged mountain ranges & canyons)
+ * - Eastern coastal sea (x > coastlineX)
+ * - Wide, winding navigable river/strait slicing across the continent
+ * Returns 0 for water (coastal sea & river channel) and positive values for land/mountains.
  */
 export function getTerrainHeight(x: number, z: number): number {
-  let islandInfluence = 0;
+  const n1 = simplex2D(x * 0.00072, z * 0.00072);
+  const n2 = simplex2D(x * 0.0019 + 19.4, z * 0.0019 - 7.3);
+  const n3 = simplex2D(x * 0.0046 - 41.2, z * 0.0046 + 23.1);
 
-  for (let i = 0; i < ISLANDS.length; i++) {
-    const isl = ISLANDS[i];
-    const dx = x - isl.x;
-    const dz = z - isl.z;
-    const distSq = dx * dx + dz * dz;
-    const rSq = isl.radius * isl.radius;
-    if (distSq < rSq) {
-      const t = 1 - Math.sqrt(distSq) / isl.radius;
-      // Smooth dome profile
+  const ridge = 1 - Math.abs(n2);
+  const detail = n1 * 0.52 + ridge * 0.34 + n3 * 0.14;
+
+  // 1. Eastern Coastal Sea mask (smooth coastal slope dropping into open sea on the east)
+  const coastX = getCoastlineX(z) + n1 * 120;
+  const distInlandFromSea = coastX - x; // positive on mainland, negative out at sea
+  if (distInlandFromSea <= -90) {
+    return 0;
+  }
+  const coastFactor =
+    distInlandFromSea <= 0
+      ? 0
+      : distInlandFromSea >= 340
+      ? 1
+      : (() => {
+          const t = distInlandFromSea / 340;
+          return t * t * (3 - 2 * t);
+        })();
+
+  // 2. Vast Continental Base Elevation (rolling plains, dry/forested valleys, elevated plateaus)
+  const westernHighlandBias = Math.max(0, Math.min(1, (-x + 400) / 2400));
+  let h = (26 + westernHighlandBias * 42 + (detail + 0.32) * 58) * coastFactor;
+
+  // 3. Sculpt Rugged Mountain Ranges & Plateaus across the Mainland
+  let rangeInfluence = 0;
+  for (let i = 0; i < MOUNTAIN_RANGES.length; i++) {
+    const r = MOUNTAIN_RANGES[i];
+    const nx = (x - r.x) / r.radiusX;
+    const nz = (z - r.z) / r.radiusZ;
+    const dSq = nx * nx + nz * nz;
+    if (dSq < 1) {
+      const t = 1 - Math.sqrt(dSq);
       const shaped = t * t * (3 - 2 * t);
-      const contribution = shaped * isl.peakHeight;
-      if (contribution > islandInfluence) {
-        islandInfluence = contribution;
+      const contrib = shaped * r.peakHeight;
+      if (contrib > rangeInfluence) {
+        rangeInfluence = contrib;
       }
     }
   }
-
-  // Secondary organic archipelago scatter far from spawn bay
-  const spawnDistSq = x * x + z * z;
-  const spawnClearMask = spawnDistSq < 460 * 460 ? 0 : Math.min(1, (Math.sqrt(spawnDistSq) - 460) / 380);
-
-  const n1 = simplex2D(x * 0.00085, z * 0.00085);
-  const n2 = simplex2D(x * 0.0021 + 19.4, z * 0.0021 - 7.3);
-  const n3 = simplex2D(x * 0.0048 - 41.2, z * 0.0048 + 23.1);
-
-  const ridge = 1 - Math.abs(n2);
-  const detail = n1 * 0.55 + ridge * 0.32 + n3 * 0.13;
-
-  // Sculpt main islands with rugged ridges
-  let h = 0;
-  if (islandInfluence > 0) {
-    const modulation = 0.62 + 0.52 * Math.max(0, detail + 0.35);
-    h = islandInfluence * modulation - 12;
+  if (rangeInfluence > 0) {
+    const modulation = 0.64 + 0.48 * Math.max(0, detail + 0.32);
+    const mountainH = rangeInfluence * modulation * coastFactor;
+    if (mountainH > h) {
+      h = mountainH;
+    }
   }
 
-  // Add subtle smaller rocky islets in outer ocean
-  const scatter = (n1 * 0.65 + n2 * 0.35 - 0.56) * 210 * spawnClearMask;
-  if (scatter > h) {
-    h = scatter;
+  // 4. Carve the Wide, Winding Continental River / Strait (navigable by enemy warships!)
+  const riverX = getRiverCenterX(z);
+  const distToRiver = Math.abs(x - riverX);
+  // Wide central delta/bay near z = -150..+350 (~260m half-width), narrowing slightly to ~185m inland
+  const bayBoost = Math.exp(-((z - 60) * (z - 60)) / (480 * 480)) * 95;
+  const riverHalfWidth = 175 + bayBoost;
+  const riverBankWidth = riverHalfWidth + 145;
+
+  // Keep Northern Gorge landmark peaks intact north of z=-620 by letting river bend west around them
+  if (distToRiver < riverBankWidth) {
+    if (distToRiver <= riverHalfWidth) {
+      h = 0;
+    } else {
+      const u = (distToRiver - riverHalfWidth) / (riverBankWidth - riverHalfWidth);
+      const smooth = u * u * (3 - 2 * u);
+      h *= smooth;
+    }
   }
 
-  // Carve dramatic fly-through canyons & mountain passes with gently curved walls
-  if (h > 10) {
-    const meander = simplex2D(x * 0.0016 + 7.1, z * 0.0016 - 4.3) * 58;
+  // 5. Carve dramatic fly-through mountain canyons (for low-altitude SAM radar masking)
+  if (h > 14) {
+    const meander = simplex2D(x * 0.0016 + 7.1, z * 0.0016 - 4.3) * 48;
     for (let i = 0; i < CANYONS.length; i++) {
       const c = CANYONS[i];
       const dist = pointToSegmentDist(x + meander, z - meander * 0.6, c.ax, c.az, c.bx, c.bz);
@@ -235,45 +277,46 @@ export function getTerrainHeight(x: number, z: number): number {
     }
   }
 
-  // Smooth fade out toward far world horizon so ocean meets sky fog cleanly
-  const distFromCenter = Math.sqrt(spawnDistSq);
-  if (distFromCenter > WORLD_RADIUS * 0.82) {
+  // 6. Smooth outer horizon taper so world blends naturally into sky fog
+  const distFromCenter = Math.hypot(x, z);
+  if (distFromCenter > WORLD_RADIUS * 0.85) {
     const edgeFade = Math.max(
       0,
-      1 - (distFromCenter - WORLD_RADIUS * 0.82) / (WORLD_RADIUS * 0.18),
+      1 - (distFromCenter - WORLD_RADIUS * 0.85) / (WORLD_RADIUS * 0.15),
     );
     h *= edgeFade;
   }
 
-  return h > 0 ? h : 0;
+  return h > 0.2 ? h : 0;
 }
 
 /**
- * Low-poly biome color for a given terrain elevation and slope.
+ * Low-poly continental biome color: riverbanks/beaches, fertile green valleys,
+ * dry olive/ochre plateaus, rugged alpine granite ridges, and snow-capped peaks.
  */
 function sampleTerrainColor(height: number, noiseJitter: number, target: THREE.Color): void {
-  const h = height + noiseJitter * 8;
+  const h = height + noiseJitter * 7;
   if (h <= 0.4) {
-    // Deep seabed / submerged shoal
-    target.setRGB(0.04, 0.22, 0.38);
-  } else if (h < 18) {
-    // Warm sunlit coastal sand
-    target.setRGB(0.76, 0.65, 0.42);
-  } else if (h < 82) {
-    // Rich emerald coastal valley
-    const t = (h - 18) / 64;
-    target.setRGB(0.14 - t * 0.03, 0.41 - t * 0.09, 0.17 - t * 0.04);
-  } else if (h < 165) {
-    // Deep alpine pine & olive ridge
-    const t = (h - 82) / 83;
-    target.setRGB(0.16 + t * 0.14, 0.3 - t * 0.06, 0.15 + t * 0.1);
-  } else if (h < 245) {
-    // Steep volcanic basalt cliffs
-    const t = (h - 165) / 80;
-    target.setRGB(0.32 + t * 0.11, 0.31 + t * 0.1, 0.34 + t * 0.11);
+    // Deep river channel / coastal seabed
+    target.setRGB(0.05, 0.24, 0.39);
+  } else if (h < 14) {
+    // Sunlit sandy riverbank & coastal shore
+    target.setRGB(0.75, 0.65, 0.44);
+  } else if (h < 56) {
+    // Fertile lowland river valley & forested green plains
+    const t = (h - 14) / 42;
+    target.setRGB(0.18 + t * 0.1, 0.41 - t * 0.06, 0.17 - t * 0.02);
+  } else if (h < 120) {
+    // Continental highland plateau & dry olive foothills
+    const t = (h - 56) / 64;
+    target.setRGB(0.32 + t * 0.12, 0.36 - t * 0.05, 0.2 + t * 0.06);
+  } else if (h < 225) {
+    // Rugged sandstone & basalt mountain ridges
+    const t = (h - 120) / 105;
+    target.setRGB(0.42 + t * 0.08, 0.37 + t * 0.07, 0.34 + t * 0.09);
   } else {
     // High alpine snow cap
-    target.setRGB(0.92, 0.95, 0.99);
+    target.setRGB(0.92, 0.95, 0.98);
   }
 }
 

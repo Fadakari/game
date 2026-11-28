@@ -9,6 +9,7 @@ import {
 } from './tankCity';
 import {
   computeDirectionalArmorHit,
+  computeTankBallisticFireDir,
   createEnemyTankUnit,
   createInitialTankState,
   getTankWaveDefinition,
@@ -209,3 +210,50 @@ test('leaderboard validation accepts tank and jet modes safely', () => {
   assert.equal(jetSub.valid, true);
   assert.equal(jetSub.sanitized?.mode, 'jet');
 });
+
+test('close-range tank barrel depression aims steeply downward and hits enemy hull without overshooting turret', () => {
+  assert.ok(
+    TANK_PHYSICS_CONFIG.minBarrelPitch <= -0.32,
+    `expected deep gun depression <= -0.32 rad, got ${TANK_PHYSICS_CONFIG.minBarrelPitch}`,
+  );
+
+  const layout = createWarTornCityLayout();
+  const tank = createInitialTankState(layout.playerSpawn);
+
+  // Command deep downward barrel depression (-0.30 rad) and confirm turret converges cleanly
+  for (let i = 0; i < 30; i++) {
+    stepTurretAim(tank, 0, -0.3, 0.04);
+  }
+  assert.ok(
+    tank.barrelPitch <= -0.29,
+    `barrel must depress smoothly to <= -0.29 rad, got ${tank.barrelPitch}`,
+  );
+
+  // Verify ballistic solver aims downward from high muzzle (y=2.06) to close enemy hull (16m away, y=1.22)
+  const muzzle = { x: 0, y: 2.06, z: 0 };
+  const closeEnemyHull = { x: 0, y: 1.22, z: -16 };
+  const fireDir = { x: 0, y: 0, z: 0 };
+  computeTankBallisticFireDir(
+    muzzle,
+    closeEnemyHull,
+    TANK_PHYSICS_CONFIG.shellSpeed,
+    TANK_PHYSICS_CONFIG.shellGravity,
+    fireDir,
+  );
+
+  assert.ok(
+    fireDir.y < -0.03,
+    `close-range ballistic trajectory must depress downward (fireDir.y=${fireDir.y})`,
+  );
+
+  // Simulate shell flight to z = -16 and verify height intersects enemy hull cleanly
+  const speed = TANK_PHYSICS_CONFIG.shellSpeed;
+  const t = 16 / Math.abs(fireDir.z * speed);
+  const impactY =
+    muzzle.y + fireDir.y * speed * t - 0.5 * TANK_PHYSICS_CONFIG.shellGravity * t * t;
+  assert.ok(
+    Math.abs(impactY - closeEnemyHull.y) < 0.08,
+    `close-range shell must impact enemy hull center (${closeEnemyHull.y}m), got ${impactY.toFixed(3)}m`,
+  );
+});
+

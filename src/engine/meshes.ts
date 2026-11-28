@@ -727,6 +727,72 @@ export function buildWarshipMesh(): SurfaceVisualRig {
 }
 
 /**
+ * Builds a fortified Enemy Radar Command Base bunker (مقر راداری دشمن)
+ * for Tactical Strike Missions using shared geometries & materials.
+ */
+export function buildCommandBaseMesh(): SurfaceVisualRig {
+  const geo = getSharedGeometries();
+  const mats = getSharedSurfaceMaterials();
+  const group = new THREE.Group();
+
+  // Wide reinforced concrete foundation pad
+  const pad = new THREE.Mesh(geo.samBaseGeo, mats.concreteMat);
+  pad.scale.set(1.65, 1.3, 1.65);
+  pad.position.set(0, 1.2, 0);
+  group.add(pad);
+
+  // Main fortified command bunker block
+  const bunker = new THREE.Mesh(geo.shipDeckHouseGeo, mats.shipDeckMat);
+  bunker.scale.set(1.5, 1.15, 0.9);
+  bunker.position.set(0, 6.2, 0);
+  group.add(bunker);
+
+  // Armored command tower superstructure
+  const tower = new THREE.Mesh(geo.shipBridgeGeo, mats.shipBridgeMat);
+  tower.scale.set(1.35, 1.25, 1.35);
+  tower.position.set(0, 13.5, 0);
+  group.add(tower);
+
+  // Twin perimeter warning stripes / energy generators
+  const flankL = new THREE.Mesh(geo.samTurretGeo, mats.samAccentMat);
+  flankL.scale.set(1.2, 1.1, 1.2);
+  flankL.position.set(-14, 4.5, 0);
+  group.add(flankL);
+
+  const flankR = new THREE.Mesh(geo.samTurretGeo, mats.samAccentMat);
+  flankR.scale.set(1.2, 1.1, 1.2);
+  flankR.position.set(14, 4.5, 0);
+  group.add(flankR);
+
+  // Tall rotating long-range radar array + bright red tactical beacon
+  const radarPivot = new THREE.Group();
+  radarPivot.position.set(0, 21.5, 0);
+
+  const radarBar = new THREE.Mesh(geo.shipRadarBarGeo, mats.samAccentMat);
+  radarBar.scale.set(1.8, 1.4, 1.4);
+  radarPivot.add(radarBar);
+
+  const beacon = new THREE.Mesh(geo.samBeaconGeo, mats.samBeaconMat);
+  beacon.scale.setScalar(1.9);
+  beacon.position.set(0, 3.0, 0);
+  radarPivot.add(beacon);
+
+  group.add(radarPivot);
+
+  return {
+    group,
+    radarDish: radarPivot,
+    flashEntries: [
+      { mesh: bunker, baseMaterial: mats.shipDeckMat },
+      { mesh: tower, baseMaterial: mats.shipBridgeMat },
+      { mesh: flankL, baseMaterial: mats.samAccentMat },
+      { mesh: flankR, baseMaterial: mats.samAccentMat },
+    ],
+    isFlashing: false,
+  };
+}
+
+/**
  * Disposes and clears module-level shared geometries & materials so React StrictMode
  * remounts never reference disposed WebGL buffers or shaders.
  */

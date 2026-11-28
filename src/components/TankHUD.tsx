@@ -202,62 +202,82 @@ export function TankHUD({
         />
       )}
 
-      {/* 3D PROJECTED ENEMY TANK MARKERS */}
+      {/* 3D PROJECTED ENEMY TANK DIAMOND MARKERS (CRISP FOR LINE-OF-SIGHT, MUTED BEHIND COVER) */}
       {hud.targets.map((target) => {
-        const accent = ARCHETYPE_COLORS[target.archetype];
+        const accent = target.inLineOfSight ? '#ef4444' : ARCHETYPE_COLORS[target.archetype];
         if (target.onScreen) {
+          const strokeColor = target.isLocked ? '#fbbf24' : accent;
           return (
             <div
               key={target.id}
+              data-testid={`tank-target-marker-${target.id}`}
               className="fixed -translate-x-1/2 -translate-y-1/2"
               style={{
                 left: `${target.screenX * 100}%`,
                 top: `${target.screenY * 100}%`,
+                opacity: target.inLineOfSight ? 1 : 0.42,
               }}
             >
               <div className="flex flex-col items-center gap-0.5">
+                {/* High-Contrast Name + Distance Tag */}
                 <div
-                  className="hud-text-shadow flex items-center gap-1 whitespace-nowrap text-[10px] font-bold"
-                  style={{ color: target.isLocked ? '#fef08a' : accent }}
+                  className={`flex items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-bold shadow-sm ${
+                    target.isLocked
+                      ? 'border-amber-400/70 bg-[#12100a]/88 text-amber-200'
+                      : target.inLineOfSight
+                      ? 'border-red-400/55 bg-[#160b0b]/84 text-red-100'
+                      : 'border-slate-300/25 bg-[#0e1318]/76 text-slate-200'
+                  }`}
                 >
                   <span>{target.nameFa}</span>
-                  <span className="tabular-nums opacity-90">{toFaNum(target.distance)}م</span>
+                  <span className="tabular-nums opacity-95">{toFaNum(target.distance)}م</span>
                 </div>
 
-                {/* Target Bracket */}
-                <div
-                  className="relative flex items-center justify-center"
-                  style={{
-                    width: target.archetype === 'siege' ? 42 : 34,
-                    height: target.archetype === 'siege' ? 36 : 30,
-                  }}
-                >
-                  <div
-                    className="h-full w-full rounded-[4px] border-2"
-                    style={{
-                      borderColor: target.isLocked ? '#fbbf24' : accent,
-                      boxShadow: target.isLocked
-                        ? '0 0 10px rgba(251, 191, 36, 0.6)'
-                        : undefined,
-                    }}
-                  />
-                  {target.isLocked && (
-                    <div className="absolute -bottom-3.5 whitespace-nowrap rounded bg-amber-500/90 px-1 py-px text-[9px] font-black text-slate-950">
-                      قفل
-                    </div>
-                  )}
-                </div>
-
-                {/* Enemy Armor Bar */}
-                <div className="mt-0.5 h-1.5 w-11 overflow-hidden rounded-full bg-slate-950/85 border border-slate-200/20">
+                {/* Enemy Armor Health Bar */}
+                <div className="h-1.5 w-14 overflow-hidden rounded-full border border-slate-100/35 bg-slate-950/95">
                   <div
                     className="h-full transition-all duration-100"
                     style={{
                       width: `${Math.max(4, target.hpRatio * 100)}%`,
-                      backgroundColor: target.hpRatio > 0.45 ? accent : '#ef4444',
+                      backgroundColor: target.isLocked
+                        ? '#fbbf24'
+                        : target.inLineOfSight
+                        ? '#ef4444'
+                        : '#94a3b8',
                     }}
                   />
                 </div>
+
+                {/* Lightweight High-Contrast HUD Diamond Marker above Spotted Tank */}
+                <svg
+                  width={target.archetype === 'siege' ? '26' : '22'}
+                  height={target.archetype === 'siege' ? '26' : '22'}
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <polygon
+                    points="12,2 22,12 12,22 2,12"
+                    fill={
+                      target.inLineOfSight
+                        ? target.isLocked
+                          ? 'rgba(251, 191, 36, 0.24)'
+                          : 'rgba(239, 68, 68, 0.22)'
+                        : 'none'
+                    }
+                    stroke={strokeColor}
+                    strokeWidth={target.isLocked ? '2.4' : target.inLineOfSight ? '2.1' : '1.4'}
+                    strokeDasharray={target.inLineOfSight ? undefined : '3 2'}
+                  />
+                  {target.inLineOfSight && (
+                    <circle cx="12" cy="12" r="2.4" fill={target.isLocked ? '#fef08a' : '#ff4d4d'} />
+                  )}
+                </svg>
+
+                {target.isLocked && (
+                  <div className="-mt-1 whitespace-nowrap rounded bg-amber-500/95 px-1.5 py-px text-[9px] font-black text-slate-950">
+                    قفل
+                  </div>
+                )}
               </div>
             </div>
           );

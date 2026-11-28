@@ -283,6 +283,10 @@ export function createEnemyUnit(
   return unit;
 }
 
+// Strict minimum standoff distance so enemy jets always break off early & stay visible in mid-range
+export const MIN_ENGAGEMENT_DISTANCE = 320;
+export const BREAKAWAY_EXIT_DISTANCE = 540;
+
 // Reusable scratch vectors (zero GC in loop)
 const _forward = new THREE.Vector3();
 const _desiredDir = new THREE.Vector3();
@@ -389,7 +393,8 @@ export function updateEnemyAI(
     }
   }
 
-  // 2. FSM State Transitions (with standoff BREAKAWAY so enemies never glue to player!)
+  // 2. FSM State Transitions (strict minimum standoff so enemies never hug or buzz canopy!)
+  const closingHeadOnEarlyBreak = distToPlayer < MIN_ENGAGEMENT_DISTANCE + 70 && alignmentToPlayer > 0.65;
   if (needsTerrainAvoid) {
     enemy.state = 'TERRAIN_AVOIDANCE';
     enemy.missileLockOnPlayer = 0;
@@ -406,23 +411,29 @@ export function updateEnemyAI(
     enemy.missileLockOnPlayer = 0;
   } else if (enemy.state === 'EVADE' && enemy.stateTimer > 0) {
     enemy.missileLockOnPlayer = 0;
-  } else if (distToPlayer < 245 && enemy.state !== 'BREAKAWAY') {
-    // Boom-and-Zoom Break-Off! Prevents hugging/orbiting invisibly right behind player
+  } else if (
+    (distToPlayer < MIN_ENGAGEMENT_DISTANCE || closingHeadOnEarlyBreak) &&
+    enemy.state !== 'BREAKAWAY'
+  ) {
+    // Early Boom-and-Zoom Break-Off well outside canopy range!
     enemy.state = 'BREAKAWAY';
-    enemy.stateTimer = 2.8 + (enemy.id % 3) * 0.45;
+    enemy.stateTimer = 3.2 + (enemy.id % 3) * 0.5;
     enemy.flankSide = Math.random() > 0.5 ? 1 : -1;
     enemy.missileLockOnPlayer = 0;
-  } else if (enemy.state === 'BREAKAWAY' && (enemy.stateTimer > 0 || distToPlayer < 380)) {
-    // Extend smoothly out to clean engagement distance before looping back
+  } else if (
+    enemy.state === 'BREAKAWAY' &&
+    (enemy.stateTimer > 0 || distToPlayer < BREAKAWAY_EXIT_DISTANCE)
+  ) {
+    // Extend cleanly out to wide tactical mid-range before curving back into view
     enemy.missileLockOnPlayer = 0;
   } else {
-    if (distToPlayer > 1550) {
+    if (distToPlayer > 1650) {
       enemy.state = 'PATROL';
       enemy.missileLockOnPlayer = 0;
     } else if (
-      distToPlayer >= 270 &&
-      distToPlayer < 940 &&
-      alignmentToPlayer > 0.64 &&
+      distToPlayer >= MIN_ENGAGEMENT_DISTANCE + 20 &&
+      distToPlayer < 1050 &&
+      alignmentToPlayer > 0.62 &&
       canAcquireAttackToken
     ) {
       enemy.state = 'ATTACK';
@@ -454,18 +465,19 @@ export function updateEnemyAI(
     desiredBankRoll = enemy.evadeDirection * 1.1;
     turnMultiplier = 1.32 * diff.enemyTurnScale;
   } else if (enemy.state === 'BREAKAWAY') {
-    // Real High-Yo-Yo / Boom-and-Zoom climb & lateral extend so player clearly sees enemy pull away
+    // Wide sweeping High-Yo-Yo climb & lateral extend keeping enemy in front/mid-range FOV
     _right.crossVectors(playerForward, _worldUp).normalize();
     _targetPoint
       .copy(playerPos)
-      .addScaledVector(playerForward, 420) // Extend out ahead/flanks into player's visible arc!
-      .addScaledVector(_right, enemy.flankSide * 340);
+      .addScaledVector(playerForward, 560) // Pull out ahead into the player's readable forward cone
+      .addScaledVector(_right, enemy.flankSide * 460);
     _targetPoint.y = Math.max(
-      playerPos.y + 95,
-      heightSampler(_targetPoint.x, _targetPoint.z) + 120,
+      playerPos.y + 115,
+      heightSampler(_targetPoint.x, _targetPoint.z) + 130,
     );
     _desiredDir.subVectors(_targetPoint, enemy.position).normalize();
-    desiredBankRoll = enemy.flankSide * 0.72;
+    desiredBankRoll = enemy.flankSide * 0.78;
+    turnMultiplier = Math.max(1.22, diff.enemyTurnScale * 1.15);
   } else if (enemy.state === 'PATROL') {
     enemy.patrolAngle += (enemy.speed / enemy.patrolRadius) * clampedDt * 0.62;
     _targetPoint.set(
@@ -475,26 +487,31 @@ export function updateEnemyAI(
     );
     _desiredDir.subVectors(_targetPoint, enemy.position).normalize();
   } else if (enemy.state === 'PURSUIT') {
-    // High-Yo-Yo & Flanking Approach: climb slightly higher & offset laterally rather than tailgating close
+    // Wide tactical flanking arc so enemies stay visible in mid-range instead of tailgating
     _right.crossVectors(playerForward, _worldUp).normalize();
-    const flankOffset = enemy.archetype === 'recon' ? 280 : 210;
-    const heightAdvantage = enemy.archetype === 'heavy' ? 85 : 55;
+    const flankOffset = enemy.archetype === 'recon' ? 390 : 330;
+    const heightAdvantage = enemy.archetype === 'heavy' ? 95 : 65;
     _targetPoint
       .copy(playerPos)
       .addScaledVector(_right, enemy.flankSide * flankOffset)
-      .addScaledVector(playerForward, 80); // Aim for an intercept angle ahead/flank, not hugging behind!
+      .addScaledVector(playerForward, 220); // Sweep across mid-range ahead/flank, never hugging tail
     _targetPoint.y = Math.max(
       playerPos.y + heightAdvantage,
-      heightSampler(_targetPoint.x, _targetPoint.z) + 95,
+      heightSampler(_targetPoint.x, _targetPoint.z) + 100,
     );
     _desiredDir.subVectors(_targetPoint, enemy.position).normalize();
   } else {
-    // ATTACK: Diving pass with lead gun bursts & telegraphed missiles
+    // ATTACK: Mid-range sweeping pass with lead gun bursts & telegraphed missiles
     const leadT = Math.min(1.15, distToPlayer / 430);
     _targetPoint.copy(playerPos).addScaledVector(playerVel, leadT);
     _desiredDir.subVectors(_targetPoint, enemy.position).normalize();
 
-    if (distToPlayer < 680 && distToPlayer > 240 && alignmentToPlayer > 0.91 && enemy.gunCooldown <= 0) {
+    if (
+      distToPlayer < 820 &&
+      distToPlayer > MIN_ENGAGEMENT_DISTANCE &&
+      alignmentToPlayer > 0.9 &&
+      enemy.gunCooldown <= 0
+    ) {
       outEvents.firedCannon = true;
       outEvents.cannonOrigin.copy(enemy.position).addScaledVector(_forward, 7);
       outEvents.cannonDir.copy(_desiredDir);
@@ -503,8 +520,8 @@ export function updateEnemyAI(
 
     if (
       spec.canFireMissiles &&
-      distToPlayer > 310 &&
-      distToPlayer < 960 &&
+      distToPlayer > MIN_ENGAGEMENT_DISTANCE + 20 &&
+      distToPlayer < 1050 &&
       alignmentToPlayer > 0.85 &&
       enemy.missileCooldown <= 0
     ) {

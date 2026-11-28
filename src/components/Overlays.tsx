@@ -15,6 +15,8 @@ import {
   Radio,
   Plane,
   Shield,
+  Crosshair,
+  Target,
 } from 'lucide-react';
 import { DIFFICULTY_PROFILES } from '../engine/enemyAI';
 import type {
@@ -23,6 +25,7 @@ import type {
   EdgeTelemetryInfo,
   GameMode,
   GamePhase,
+  JetSubMode,
 } from '../engine/types';
 import { getSavedCallsign } from '../services/edgeLeaderboard';
 import { formatScoreFa, formatTimeFa, toFaNum } from '../utils/formatFa';
@@ -39,6 +42,7 @@ export interface ActiveOverlayHudSummary {
 
 interface OverlaysProps {
   mode: GameMode;
+  jetSubMode: JetSubMode;
   hud: ActiveOverlayHudSummary;
   edgeTelemetry: EdgeTelemetryInfo | null;
   difficulty: DifficultyLevel;
@@ -46,6 +50,7 @@ interface OverlaysProps {
   isFullscreen: boolean;
   isPortraitMobile: boolean;
   onSelectMode: (mode: GameMode) => void;
+  onSelectJetSubMode: (subMode: JetSubMode) => void;
   onSelectDifficulty: (level: DifficultyLevel) => void;
   onStart: () => void;
   onResume: () => void;
@@ -84,6 +89,7 @@ const TANK_DIFFICULTY_DESC_FA: Record<DifficultyLevel, string> = {
  */
 export function Overlays({
   mode,
+  jetSubMode,
   hud,
   edgeTelemetry,
   difficulty,
@@ -91,6 +97,7 @@ export function Overlays({
   isFullscreen,
   isPortraitMobile,
   onSelectMode,
+  onSelectJetSubMode,
   onSelectDifficulty,
   onStart,
   onResume,
@@ -180,13 +187,13 @@ export function Overlays({
       {hud.phase === 'title' && !isPortraitMobile && (
         <div
           dir="rtl"
-          className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-between p-5 sm:p-8"
+          className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-between p-4 sm:p-8 [@media(max-height:540px)]:p-2.5"
         >
           {/* Top bar: ArvanCloud Edge PoP Telemetry + subtle utility buttons */}
-          <div className="flex items-start justify-between">
+          <div className="flex shrink-0 items-start justify-between gap-2">
             <div>
               {edgeTelemetry && (
-                <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-emerald-400/25 bg-[#0b1624]/86 px-3 py-1.5 text-xs font-bold text-emerald-200">
+                <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-emerald-400/25 bg-[#0b1624]/86 px-2.5 py-1 text-[11px] font-bold text-emerald-200 sm:px-3 sm:py-1.5 sm:text-xs">
                   <Radio className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                   <span className="tabular-nums whitespace-nowrap">
                     اتصال به لبه آروان | پینگ: {toFaNum(edgeTelemetry.pingMs)}ms
@@ -203,9 +210,9 @@ export function Overlays({
                 }}
                 tabIndex={-1}
                 aria-label={muted ? 'وصل صدا' : 'قطع صدا'}
-                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200/20 bg-[#0b1624]/86 text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200/20 bg-[#0b1624]/86 text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer [@media(max-height:540px)]:h-8 [@media(max-height:540px)]:w-8"
               >
-                {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                {muted ? <VolumeX className="h-4 w-4 sm:h-5 sm:w-5" /> : <Volume2 className="h-4 w-4 sm:h-5 sm:w-5" />}
               </button>
               <button
                 type="button"
@@ -215,225 +222,284 @@ export function Overlays({
                 }}
                 tabIndex={-1}
                 aria-label={isFullscreen ? 'خروج از تمام‌صفحه' : 'نمایش تمام‌صفحه'}
-                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200/20 bg-[#0b1624]/86 text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200/20 bg-[#0b1624]/86 text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer [@media(max-height:540px)]:h-8 [@media(max-height:540px)]:w-8"
               >
                 {isFullscreen ? (
-                  <Minimize2 className="h-5 w-5" />
+                  <Minimize2 className="h-4 w-4 sm:h-5 sm:w-5" />
                 ) : (
-                  <Maximize2 className="h-5 w-5" />
+                  <Maximize2 className="h-4 w-4 sm:h-5 sm:w-5" />
                 )}
               </button>
             </div>
           </div>
 
-          {/* Asymmetric Right-Anchored Title Lockup over open negative space */}
-          <div className="flex flex-1 items-center justify-start">
+          {/* Asymmetric Right-Anchored Title Lockup — switches to compact 2-column horizontal grid on mobile landscape so Start CTA never clips */}
+          <div className="flex min-h-0 flex-1 items-center justify-start [@media(max-height:540px)]:justify-center">
             <div
-              className={`pointer-events-auto w-full max-w-md rounded-xl border px-6 py-6 shadow-2xl ${
+              className={`pointer-events-auto w-full max-w-md max-h-[calc(100dvh-56px)] overflow-y-auto rounded-xl border px-5 py-5 shadow-2xl [@media(max-height:540px)]:max-w-2xl [@media(max-height:540px)]:px-4 [@media(max-height:540px)]:py-3 ${
                 isTank
-                  ? 'border-amber-300/25 bg-[#121614]/86'
-                  : 'border-slate-100/15 bg-[#09131f]/84'
+                  ? 'border-amber-300/25 bg-[#121614]/88'
+                  : 'border-slate-100/15 bg-[#09131f]/86'
               }`}
             >
-              {/* Bespoke Inline SVG Emblem + Title Lockup */}
-              <div className="mb-4 flex items-center gap-4">
-                {isTank ? (
-                  <svg
-                    viewBox="0 0 64 64"
-                    className="h-14 w-14 shrink-0"
-                    aria-hidden="true"
-                  >
-                    <polygon
-                      points="32,4 58,18 58,46 32,60 6,46 6,18"
-                      fill="#1c221d"
-                      stroke="#f59e0b"
-                      strokeWidth="2.5"
-                    />
-                    <rect x="14" y="34" width="36" height="10" rx="4" fill="#d6d3d1" />
-                    <rect x="21" y="25" width="20" height="9" rx="2" fill="#f8fafc" />
-                    <rect x="39" y="27.5" width="14" height="3.2" rx="1" fill="#f59e0b" />
-                    <circle cx="20" cy="40" r="2.2" fill="#1c221d" />
-                    <circle cx="28" cy="40" r="2.2" fill="#1c221d" />
-                    <circle cx="36" cy="40" r="2.2" fill="#1c221d" />
-                    <circle cx="44" cy="40" r="2.2" fill="#1c221d" />
-                  </svg>
-                ) : (
-                  <svg
-                    viewBox="0 0 64 64"
-                    className="h-14 w-14 shrink-0"
-                    aria-hidden="true"
-                  >
-                    <polygon
-                      points="32,4 58,18 58,46 32,60 6,46 6,18"
-                      fill="#102033"
-                      stroke="#f59e0b"
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d="M32 13 L37 28 L52 34 L36 37 L34 48 L40 52 L32 50 L24 52 L30 48 L28 37 L12 34 L27 28 Z"
-                      fill="#f8fafc"
-                      stroke="#09131f"
-                      strokeWidth="1.2"
-                    />
-                    <circle cx="32" cy="31" r="2.2" fill="#f59e0b" />
-                  </svg>
-                )}
+              <div className="flex flex-col [@media(max-height:540px)]:grid [@media(max-height:540px)]:grid-cols-2 [@media(max-height:540px)]:items-center [@media(max-height:540px)]:gap-4">
+                {/* COLUMN 1 (RTL Right): Brand Emblem, Main Mode Selector & Jet Sub-Mode Selector */}
                 <div>
-                  <h1 className="hud-stroke-title text-3xl font-black tracking-tight text-white sm:text-4xl">
-                    شکارچی آسمان
-                  </h1>
-                  <p className="mt-1 text-xs font-semibold text-amber-300/95 sm:text-sm">
-                    {isTank
-                      ? 'نبرد زرهی شهری سه‌بعدی'
-                      : 'نبرد هوایی تاکتیکی سه‌بعدی'}
-                  </p>
-                </div>
-              </div>
+                  {/* Bespoke Inline SVG Emblem + Title Lockup */}
+                  <div className="mb-3.5 flex items-center gap-3.5 [@media(max-height:540px)]:mb-2.5 [@media(max-height:540px)]:gap-2.5">
+                    {isTank ? (
+                      <svg
+                        viewBox="0 0 64 64"
+                        className="h-12 w-12 shrink-0 sm:h-14 sm:w-14 [@media(max-height:540px)]:h-10 [@media(max-height:540px)]:w-10"
+                        aria-hidden="true"
+                      >
+                        <polygon
+                          points="32,4 58,18 58,46 32,60 6,46 6,18"
+                          fill="#1c221d"
+                          stroke="#f59e0b"
+                          strokeWidth="2.5"
+                        />
+                        <rect x="14" y="34" width="36" height="10" rx="4" fill="#d6d3d1" />
+                        <rect x="21" y="25" width="20" height="9" rx="2" fill="#f8fafc" />
+                        <rect x="39" y="27.5" width="14" height="3.2" rx="1" fill="#f59e0b" />
+                        <circle cx="20" cy="40" r="2.2" fill="#1c221d" />
+                        <circle cx="28" cy="40" r="2.2" fill="#1c221d" />
+                        <circle cx="36" cy="40" r="2.2" fill="#1c221d" />
+                        <circle cx="44" cy="40" r="2.2" fill="#1c221d" />
+                      </svg>
+                    ) : (
+                      <svg
+                        viewBox="0 0 64 64"
+                        className="h-12 w-12 shrink-0 sm:h-14 sm:w-14 [@media(max-height:540px)]:h-10 [@media(max-height:540px)]:w-10"
+                        aria-hidden="true"
+                      >
+                        <polygon
+                          points="32,4 58,18 58,46 32,60 6,46 6,18"
+                          fill="#102033"
+                          stroke="#f59e0b"
+                          strokeWidth="2.5"
+                        />
+                        <path
+                          d="M32 13 L37 28 L52 34 L36 37 L34 48 L40 52 L32 50 L24 52 L30 48 L28 37 L12 34 L27 28 Z"
+                          fill="#f8fafc"
+                          stroke="#09131f"
+                          strokeWidth="1.2"
+                        />
+                        <circle cx="32" cy="31" r="2.2" fill="#f59e0b" />
+                      </svg>
+                    )}
+                    <div>
+                      <h1 className="hud-stroke-title text-2xl font-black tracking-tight text-white sm:text-4xl [@media(max-height:540px)]:text-xl">
+                        شکارچی آسمان
+                      </h1>
+                      <p className="mt-0.5 text-xs font-semibold text-amber-300/95 sm:text-sm [@media(max-height:540px)]:text-[11px]">
+                        {isTank
+                          ? 'نبرد زرهی شهری سه‌بعدی'
+                          : jetSubMode === 'strike'
+                            ? 'عملیات تهاجمی و انهدام اهداف راهبردی'
+                            : 'نبرد هوایی تاکتیکی سه‌بعدی'}
+                      </p>
+                    </div>
+                  </div>
 
-              {/* 2-MODE SELECTOR: Fighter Jet vs Armored Tank */}
-              <div className="mb-4">
-                <div className="mb-1.5 text-xs font-semibold text-slate-300">
-                  انتخاب حالت عملیات
-                </div>
-                <div
-                  role="group"
-                  aria-label="حالت بازی"
-                  className="grid grid-cols-2 gap-2"
-                >
-                  <button
-                    type="button"
-                    data-mode-btn="jet"
-                    aria-pressed={mode === 'jet'}
-                    onClick={(e) => {
-                      e.currentTarget.blur();
-                      onSelectMode('jet');
-                    }}
-                    className={`flex flex-col items-center gap-1 rounded-lg border px-3 py-2.5 text-center transition-colors cursor-pointer ${
-                      mode === 'jet'
-                        ? 'border-amber-400 bg-amber-500/20 text-white shadow-md'
-                        : 'border-slate-200/15 bg-[#0e1b2a]/80 text-slate-300 hover:border-slate-200/35 hover:text-white'
-                    }`}
-                  >
-                    <Plane
-                      className={`h-4 w-4 ${
-                        mode === 'jet' ? 'text-amber-400' : 'text-sky-300'
-                      }`}
-                    />
-                    <span className="text-xs font-black whitespace-nowrap">
-                      نبرد هوایی (جنگنده)
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-mode-btn="tank"
-                    aria-pressed={mode === 'tank'}
-                    onClick={(e) => {
-                      e.currentTarget.blur();
-                      onSelectMode('tank');
-                    }}
-                    className={`flex flex-col items-center gap-1 rounded-lg border px-3 py-2.5 text-center transition-colors cursor-pointer ${
-                      mode === 'tank'
-                        ? 'border-amber-400 bg-amber-500/20 text-white shadow-md'
-                        : 'border-slate-200/15 bg-[#191d1a]/80 text-slate-300 hover:border-slate-200/35 hover:text-white'
-                    }`}
-                  >
-                    <Shield
-                      className={`h-4 w-4 ${
-                        mode === 'tank' ? 'text-amber-400' : 'text-emerald-300'
-                      }`}
-                    />
-                    <span className="text-xs font-black whitespace-nowrap">
-                      نبرد زرهی (تانک)
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {hud.highScore > 0 && (
-                <div className="mb-3.5 flex items-center justify-between border-y border-slate-200/12 py-1.5 text-xs sm:text-sm">
-                  <span className="text-slate-300">
-                    بهترین رکورد ({isTank ? 'تانک' : 'جنگنده'})
-                  </span>
-                  <span className="tabular-nums text-base font-bold text-amber-400">
-                    {formatScoreFa(hud.highScore)}
-                  </span>
-                </div>
-              )}
-
-              {/* 3-Tier Difficulty Segmented Selector */}
-              <div className="mb-4">
-                <div className="mb-1.5 flex items-center justify-between text-xs text-slate-300">
-                  <span>درجه سختی نبرد</span>
-                  <span className="text-amber-300/90">
-                    {DIFFICULTY_PROFILES[difficulty].labelFa}
-                  </span>
-                </div>
-                <div
-                  role="group"
-                  aria-label="درجه سختی"
-                  className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-200/12 bg-[#0d1826]/85 p-1"
-                >
-                  {(['easy', 'normal', 'hard'] as const).map((level) => {
-                    const active = difficulty === level;
-                    return (
+                  {/* 2-MODE SELECTOR: Fighter Jet vs Armored Tank */}
+                  <div className="mb-3 [@media(max-height:540px)]:mb-2">
+                    <div className="mb-1 text-xs font-semibold text-slate-300 [@media(max-height:540px)]:text-[11px]">
+                      انتخاب حالت عملیات
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="حالت بازی"
+                      className="grid grid-cols-2 gap-2"
+                    >
                       <button
-                        key={level}
                         type="button"
-                        aria-pressed={active}
+                        data-mode-btn="jet"
+                        aria-pressed={mode === 'jet'}
                         onClick={(e) => {
                           e.currentTarget.blur();
-                          onSelectDifficulty(level);
+                          onSelectMode('jet');
                         }}
-                        className={`rounded-md py-1.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                          active
-                            ? 'bg-amber-500 text-slate-950 shadow-sm'
-                            : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                        className={`flex flex-col items-center gap-1 rounded-lg border px-2.5 py-2 text-center transition-colors cursor-pointer [@media(max-height:540px)]:py-1.5 ${
+                          mode === 'jet'
+                            ? 'border-amber-400 bg-amber-500/20 text-white shadow-md'
+                            : 'border-slate-200/15 bg-[#0e1b2a]/80 text-slate-300 hover:border-slate-200/35 hover:text-white'
                         }`}
                       >
-                        {DIFFICULTY_PROFILES[level].labelFa}
+                        <Plane
+                          className={`h-4 w-4 ${
+                            mode === 'jet' ? 'text-amber-400' : 'text-sky-300'
+                          }`}
+                        />
+                        <span className="text-xs font-black whitespace-nowrap [@media(max-height:540px)]:text-[11px]">
+                          نبرد هوایی (جنگنده)
+                        </span>
                       </button>
-                    );
-                  })}
+
+                      <button
+                        type="button"
+                        data-mode-btn="tank"
+                        aria-pressed={mode === 'tank'}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onSelectMode('tank');
+                        }}
+                        className={`flex flex-col items-center gap-1 rounded-lg border px-2.5 py-2 text-center transition-colors cursor-pointer [@media(max-height:540px)]:py-1.5 ${
+                          mode === 'tank'
+                            ? 'border-amber-400 bg-amber-500/20 text-white shadow-md'
+                            : 'border-slate-200/15 bg-[#191d1a]/80 text-slate-300 hover:border-slate-200/35 hover:text-white'
+                        }`}
+                      >
+                        <Shield
+                          className={`h-4 w-4 ${
+                            mode === 'tank' ? 'text-amber-400' : 'text-emerald-300'
+                          }`}
+                        />
+                        <span className="text-xs font-black whitespace-nowrap [@media(max-height:540px)]:text-[11px]">
+                          نبرد زرهی (تانک)
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* JET SUB-MODE SELECTOR: Free Dogfight vs Tactical Strike Missions */}
+                  {mode === 'jet' && (
+                    <div className="mb-3 [@media(max-height:540px)]:mb-0">
+                      <div className="mb-1 text-xs font-semibold text-slate-300 [@media(max-height:540px)]:text-[11px]">
+                        نوع مأموریت هوایی
+                      </div>
+                      <div
+                        role="group"
+                        aria-label="نوع مأموریت جنگنده"
+                        className="grid grid-cols-2 gap-1.5 rounded-lg border border-slate-200/12 bg-[#0d1826]/85 p-1"
+                      >
+                        <button
+                          type="button"
+                          data-submode-btn="dogfight"
+                          aria-pressed={jetSubMode === 'dogfight'}
+                          onClick={(e) => {
+                            e.currentTarget.blur();
+                            onSelectJetSubMode('dogfight');
+                          }}
+                          className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap [@media(max-height:540px)]:py-1 [@media(max-height:540px)]:text-[11px] ${
+                            jetSubMode === 'dogfight'
+                              ? 'bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60'
+                              : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                          }`}
+                        >
+                          <Crosshair className="h-3.5 w-3.5 shrink-0" />
+                          <span>نبرد آزاد</span>
+                        </button>
+                        <button
+                          type="button"
+                          data-submode-btn="strike"
+                          aria-pressed={jetSubMode === 'strike'}
+                          onClick={(e) => {
+                            e.currentTarget.blur();
+                            onSelectJetSubMode('strike');
+                          }}
+                          className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap [@media(max-height:540px)]:py-1 [@media(max-height:540px)]:text-[11px] ${
+                            jetSubMode === 'strike'
+                              ? 'bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/70'
+                              : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                          }`}
+                        >
+                          <Target className="h-3.5 w-3.5 shrink-0" />
+                          <span>عملیات تهاجمی</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300/90">
-                  {isTank
-                    ? TANK_DIFFICULTY_DESC_FA[difficulty]
-                    : DIFFICULTY_PROFILES[difficulty].descFa}
-                </p>
+
+                {/* COLUMN 2 (RTL Left): High Score, Difficulty, Start CTA & Leaderboard */}
+                <div>
+                  {hud.highScore > 0 && (
+                    <div className="mb-3 flex items-center justify-between border-y border-slate-200/12 py-1.5 text-xs sm:text-sm [@media(max-height:540px)]:mb-2 [@media(max-height:540px)]:py-1">
+                      <span className="text-slate-300">
+                        بهترین رکورد ({isTank ? 'تانک' : 'جنگنده'})
+                      </span>
+                      <span className="tabular-nums text-sm font-bold text-amber-400 sm:text-base">
+                        {formatScoreFa(hud.highScore)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 3-Tier Difficulty Segmented Selector */}
+                  <div className="mb-3.5 [@media(max-height:540px)]:mb-2.5">
+                    <div className="mb-1 flex items-center justify-between text-xs text-slate-300 [@media(max-height:540px)]:text-[11px]">
+                      <span>درجه سختی نبرد</span>
+                      <span className="text-amber-300/90">
+                        {DIFFICULTY_PROFILES[difficulty].labelFa}
+                      </span>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="درجه سختی"
+                      className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-200/12 bg-[#0d1826]/85 p-1"
+                    >
+                      {(['easy', 'normal', 'hard'] as const).map((level) => {
+                        const active = difficulty === level;
+                        return (
+                          <button
+                            key={level}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={(e) => {
+                              e.currentTarget.blur();
+                              onSelectDifficulty(level);
+                            }}
+                            className={`rounded-md py-1.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap [@media(max-height:540px)]:py-1 [@media(max-height:540px)]:text-[11px] ${
+                              active
+                                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                                : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                            }`}
+                          >
+                            {DIFFICULTY_PROFILES[level].labelFa}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300/90 [@media(max-height:500px)]:hidden">
+                      {isTank
+                        ? TANK_DIFFICULTY_DESC_FA[difficulty]
+                        : DIFFICULTY_PROFILES[difficulty].descFa}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-start="true"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      setSubmitState('idle');
+                      setSubmitErrorFa('');
+                      onStart();
+                    }}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-amber-500 px-6 py-3 text-base font-black text-slate-950 shadow-lg transition-transform hover:bg-amber-400 active:scale-[0.98] cursor-pointer whitespace-nowrap sm:text-lg [@media(max-height:540px)]:py-2.5 [@media(max-height:540px)]:text-base"
+                  >
+                    <Play className="h-5 w-5 fill-slate-950" />
+                    <span>شروع عملیات</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onOpenLeaderboard();
+                    }}
+                    className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200/18 bg-[#122236]/90 px-4 py-2 text-xs font-bold text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer whitespace-nowrap sm:mt-2.5 sm:py-2.5 sm:text-sm [@media(max-height:540px)]:py-1.5"
+                  >
+                    <Trophy className="h-4 w-4 text-amber-400" />
+                    <span>جدول ۱۰۰ خلبان و فرمانده برتر</span>
+                  </button>
+                </div>
               </div>
-
-              <button
-                type="button"
-                data-start="true"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  setSubmitState('idle');
-                  setSubmitErrorFa('');
-                  onStart();
-                }}
-                className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-amber-500 px-6 py-3 text-lg font-black text-slate-950 shadow-lg transition-transform hover:bg-amber-400 active:scale-[0.98] cursor-pointer whitespace-nowrap"
-              >
-                <Play className="h-5 w-5 fill-slate-950" />
-                <span>شروع عملیات</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenLeaderboard();
-                }}
-                className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200/18 bg-[#122236]/90 px-5 py-2.5 text-sm font-bold text-slate-100 transition-colors hover:border-amber-400/60 hover:text-amber-300 cursor-pointer whitespace-nowrap"
-              >
-                <Trophy className="h-4 w-4 text-amber-400" />
-                <span>جدول ۱۰۰ خلبان و فرمانده برتر</span>
-              </button>
             </div>
           </div>
 
-          {/* Single Flat Control-Hint Line in Bottom Safe Margin */}
-          <div className="flex justify-center">
+          {/* Single Flat Control-Hint Line in Bottom Safe Margin (hidden on short mobile landscape) */}
+          <div className="flex shrink-0 justify-center [@media(max-height:540px)]:hidden">
             <p className="hud-text-shadow text-center text-xs font-medium text-slate-100/95 sm:text-sm">
               {isTank
                 ? 'حرکت بدنه: WASD · برجک: ماوس · توپ ۱۲۰م‌م: کلیک چپ · تیربار: راست‌کلیک یا Space · پرده دود: F · توربو: Shift · قفل: Q'
@@ -452,7 +518,7 @@ export function Overlays({
           aria-modal="true"
           aria-label="توقف بازی"
         >
-          <div className="w-full max-w-sm rounded-xl border border-slate-200/20 bg-[#0d1929] p-6 text-slate-100 shadow-2xl">
+          <div className="w-full max-w-sm max-h-[calc(100dvh-24px)] overflow-y-auto rounded-xl border border-slate-200/20 bg-[#0d1929] p-5 text-slate-100 shadow-2xl sm:p-6">
             <h2 className="mb-1 text-center text-2xl font-black text-white">توقف عملیات</h2>
             <p className="mb-5 text-center text-xs text-slate-400">
               {isTank ? 'نبرد زرهی' : 'نبرد هوایی'} · موج {toFaNum(hud.wave)} · امتیاز فعلی{' '}
@@ -500,7 +566,7 @@ export function Overlays({
           aria-modal="true"
           aria-label="پایان عملیات"
         >
-          <div className="w-full max-w-md rounded-xl border border-red-400/30 bg-[#0d1826] p-6 text-slate-100 shadow-2xl">
+          <div className="w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto rounded-xl border border-red-400/30 bg-[#0d1826] p-5 text-slate-100 shadow-2xl sm:p-6">
             <div className="mb-5 text-center">
               <h2 className="text-3xl font-black text-red-400">پایان عملیات</h2>
               <p className="mt-1.5 text-sm font-medium text-slate-300">

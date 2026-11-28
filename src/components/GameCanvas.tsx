@@ -7,13 +7,15 @@ import type {
   DifficultyLevel,
   GameMode,
   HudSnapshot,
+  JetSubMode,
   TankControlInput,
   TankHudSnapshot,
 } from '../engine/types';
 
 export interface EngineController {
-  startNewGame: (difficulty?: DifficultyLevel) => void;
+  startNewGame: (difficulty?: DifficultyLevel, jetSubMode?: JetSubMode) => void;
   setDifficulty: (level: DifficultyLevel) => void;
+  setJetSubMode: (subMode: JetSubMode) => void;
   togglePause: () => void;
   returnToTitle: () => void;
   toggleMute: () => boolean;
@@ -33,6 +35,7 @@ export interface EngineController {
 
 interface GameCanvasProps {
   mode: GameMode;
+  jetSubMode: JetSubMode;
   difficulty: DifficultyLevel;
   onHudUpdate: (snapshot: HudSnapshot) => void;
   onTankHudUpdate: (snapshot: TankHudSnapshot) => void;
@@ -49,6 +52,7 @@ interface GameCanvasProps {
  */
 export function GameCanvas({
   mode,
+  jetSubMode,
   difficulty,
   onHudUpdate,
   onTankHudUpdate,
@@ -64,6 +68,7 @@ export function GameCanvas({
   const onControllerRef = useRef(onControllerReady);
   const onFirstInputRef = useRef(onFirstInput);
   const difficultyRef = useRef(difficulty);
+  const jetSubModeRef = useRef(jetSubMode);
 
   onHudRef.current = onHudUpdate;
   onTankHudRef.current = onTankHudUpdate;
@@ -71,6 +76,7 @@ export function GameCanvas({
   onControllerRef.current = onControllerReady;
   onFirstInputRef.current = onFirstInput;
   difficultyRef.current = difficulty;
+  jetSubModeRef.current = jetSubMode;
 
   useEffect(() => {
     const el = mountRef.current;
@@ -84,6 +90,7 @@ export function GameCanvas({
         onHudRef.current(snap);
       });
       engine.setDifficulty(difficultyRef.current);
+      engine.setJetSubMode(jetSubModeRef.current);
 
       const keysHeld = new Set<string>();
       const touchState = {
@@ -122,7 +129,7 @@ export function GameCanvas({
       };
 
       const controller: EngineController = {
-        startNewGame: (overrideDiff?: DifficultyLevel) => {
+        startNewGame: (overrideDiff?: DifficultyLevel, overrideSubMode?: JetSubMode) => {
           keysHeld.clear();
           touchState.pitch = 0;
           touchState.roll = 0;
@@ -131,10 +138,16 @@ export function GameCanvas({
           if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur();
           }
-          engine.startNewGame(overrideDiff ?? difficultyRef.current);
+          engine.startNewGame(
+            overrideDiff ?? difficultyRef.current,
+            overrideSubMode ?? jetSubModeRef.current,
+          );
         },
         setDifficulty: (level: DifficultyLevel) => {
           engine.setDifficulty(level);
+        },
+        setJetSubMode: (subMode: JetSubMode) => {
+          engine.setJetSubMode(subMode);
         },
         togglePause: () => {
           keysHeld.clear();
@@ -366,6 +379,7 @@ export function GameCanvas({
       setDifficulty: (level: DifficultyLevel) => {
         tankEngine.setDifficulty(level);
       },
+      setJetSubMode: () => {},
       togglePause: () => {
         keysHeld.clear();
         mouseState.leftDown = false;

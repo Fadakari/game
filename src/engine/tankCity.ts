@@ -466,7 +466,8 @@ export function computeCameraWallPullIn(
 }
 
 /**
- * Procedural cracked asphalt & dusty road grid CanvasTexture (SRGBColorSpace, zero external assets).
+ * Procedural dark cracked asphalt (#1f2429) with faded road lane markings, dirt shoulders,
+ * intersection wear & surface cracks (SRGBColorSpace, zero external assets).
  */
 function createUrbanGroundTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const size = 512;
@@ -475,25 +476,44 @@ function createUrbanGroundTexture(maxAnisotropy: number): THREE.CanvasTexture {
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
 
-  // Base dusty asphalt concrete
-  ctx.fillStyle = '#5a564f';
+  // Base dark cracked urban asphalt (#1f2429)
+  ctx.fillStyle = '#1f2429';
   ctx.fillRect(0, 0, size, size);
 
   const rand = createRng(77123);
-  // Subtle rubble & sand grain mottling
-  for (let i = 0; i < 1600; i++) {
+  // Subtle aggregate asphalt speckle & worn tire-track oil patches
+  for (let i = 0; i < 2200; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = 1 + rand() * 5;
-    const shade = Math.floor(72 + rand() * 44);
-    ctx.fillStyle = `rgba(${shade + 8}, ${shade + 2}, ${shade - 8}, 0.24)`;
+    const r = 1 + rand() * 4.5;
+    const shade = Math.floor(24 + rand() * 34);
+    ctx.fillStyle = `rgba(${shade}, ${shade + 3}, ${shade + 7}, 0.28)`;
     ctx.fillRect(x, y, r, r);
   }
 
-  // Subtle weathered road lane markings & cracks
-  ctx.strokeStyle = 'rgba(205, 188, 152, 0.22)';
-  ctx.lineWidth = 4;
-  ctx.setLineDash([24, 24]);
+  // Warm dusty dirt shoulders & curb grime along block edges
+  ctx.fillStyle = 'rgba(116, 102, 86, 0.24)';
+  ctx.fillRect(0, 0, size, 26);
+  ctx.fillRect(0, size - 26, size, 26);
+  ctx.fillRect(0, 0, 26, size);
+  ctx.fillRect(size - 26, 0, 26, size);
+
+  // Subtle scattered concrete dust patches near curbs
+  for (let i = 0; i < 120; i++) {
+    const edge = i % 4;
+    const x = edge < 2 ? rand() * size : edge === 2 ? rand() * 48 : size - rand() * 48;
+    const y = edge >= 2 ? rand() * size : edge === 0 ? rand() * 48 : size - rand() * 48;
+    const rad = 6 + rand() * 18;
+    ctx.fillStyle = 'rgba(138, 126, 110, 0.14)';
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Faded yellow/off-white urban avenue center lane markings
+  ctx.strokeStyle = 'rgba(218, 202, 162, 0.34)';
+  ctx.lineWidth = 4.5;
+  ctx.setLineDash([28, 24]);
   ctx.beginPath();
   ctx.moveTo(size * 0.5, 0);
   ctx.lineTo(size * 0.5, size);
@@ -501,17 +521,23 @@ function createUrbanGroundTexture(maxAnisotropy: number): THREE.CanvasTexture {
   ctx.lineTo(size, size * 0.5);
   ctx.stroke();
 
+  // Faded white road shoulder guide stripes
+  ctx.strokeStyle = 'rgba(210, 214, 218, 0.16)';
+  ctx.lineWidth = 2.5;
   ctx.setLineDash([]);
-  ctx.strokeStyle = 'rgba(32, 30, 28, 0.32)';
-  ctx.lineWidth = 1.6;
-  for (let i = 0; i < 24; i++) {
+  ctx.strokeRect(34, 34, size - 68, size - 68);
+
+  // Deep dark jagged asphalt cracks & shell scars
+  ctx.strokeStyle = 'rgba(8, 10, 13, 0.58)';
+  ctx.lineWidth = 1.8;
+  for (let i = 0; i < 34; i++) {
     let cx = rand() * size;
     let cy = rand() * size;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
-    for (let s = 0; s < 4; s++) {
-      cx += (rand() - 0.5) * 34;
-      cy += (rand() - 0.5) * 34;
+    for (let s = 0; s < 5; s++) {
+      cx += (rand() - 0.5) * 38;
+      cy += (rand() - 0.5) * 38;
       ctx.lineTo(cx, cy);
     }
     ctx.stroke();
@@ -537,9 +563,9 @@ export function buildWarTornCityScene(
   const root = new THREE.Group();
   const rand = createRng(55189);
 
-  // 1. Extended dusty wasteland outer terrain (prevents boxy floating void perimeter)
+  // 1. Extended weathered arid wasteland outer terrain (frames the ruined city cleanly)
   const outerGroundMat = new THREE.MeshStandardMaterial({
-    color: 0x877761,
+    color: 0x5c5347,
     roughness: 0.96,
     metalness: 0.02,
   });
@@ -548,13 +574,13 @@ export function buildWarTornCityScene(
   outerGround.position.y = -0.06;
   root.add(outerGround);
 
-  // 2. Main urban district asphalt/concrete floor (offset slightly above outer ground to avoid Z-fighting)
+  // 2. Main urban district dark cracked asphalt floor (#1f2429) contrasting against warm concrete buildings
   const roadTex = createUrbanGroundTexture(maxAnisotropy);
   const roadMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: roadTex,
-    roughness: 0.9,
-    metalness: 0.05,
+    roughness: 0.88,
+    metalness: 0.08,
   });
   const cityGround = new THREE.Mesh(
     new THREE.PlaneGeometry(CITY_PLAYABLE_HALF * 2 + 40, CITY_PLAYABLE_HALF * 2 + 40),
@@ -565,38 +591,40 @@ export function buildWarTornCityScene(
   cityGround.receiveShadow = true;
   root.add(cityGround);
 
-  // Shared urban architectural materials (distinct concrete/ash tones + high roughness variance)
+  // Shared urban architectural materials: warm weathered concrete/sandstone (#8c8275 / #6e655b) + charred frames
   const concreteMaterials = [
-    new THREE.MeshStandardMaterial({ color: 0x8d8579, roughness: 0.88, metalness: 0.05 }),
-    new THREE.MeshStandardMaterial({ color: 0x767067, roughness: 0.92, metalness: 0.04 }),
-    new THREE.MeshStandardMaterial({ color: 0x9c8e7b, roughness: 0.85, metalness: 0.06 }),
+    new THREE.MeshStandardMaterial({ color: 0x8c8275, roughness: 0.88, metalness: 0.04 }),
+    new THREE.MeshStandardMaterial({ color: 0x6e655b, roughness: 0.92, metalness: 0.05 }),
+    new THREE.MeshStandardMaterial({ color: 0x9b8f7e, roughness: 0.86, metalness: 0.04 }),
   ];
   const trimMat = new THREE.MeshStandardMaterial({
-    color: 0x5c5852,
-    roughness: 0.82,
-    metalness: 0.12,
+    color: 0x524c45,
+    roughness: 0.86,
+    metalness: 0.1,
   });
   const windowVoidMat = new THREE.MeshStandardMaterial({
-    color: 0x1b1d20,
-    roughness: 0.35,
-    metalness: 0.35,
+    color: 0x131619,
+    roughness: 0.42,
+    metalness: 0.28,
   });
   const scorchedMat = new THREE.MeshStandardMaterial({
-    color: 0x35322f,
-    roughness: 0.94,
-    metalness: 0.08,
+    color: 0x262422,
+    roughness: 0.95,
+    metalness: 0.06,
   });
   const rebarMat = new THREE.MeshStandardMaterial({
-    color: 0x4b3d33,
-    roughness: 0.55,
-    metalness: 0.65,
+    color: 0x4b3b2f,
+    roughness: 0.52,
+    metalness: 0.68,
   });
 
   // Shared unit primitives scaled cleanly per building (minimal unique geometries!)
   const unitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
-  const sidewalkGeo = new THREE.BoxGeometry(1, 0.28, 1);
+  const sidewalkGeo = new THREE.BoxGeometry(1, 0.3, 1);
+  const monumentBaseGeo = new THREE.CylinderGeometry(5.6, 6.4, 1.3, 12);
+  const monumentPillarGeo = new THREE.CylinderGeometry(1.5, 2.2, 4.4, 8);
 
-  // 3. Tiered Low-Poly Ruined Buildings with jagged slanted upper stories & recessed dark window bands
+  // 3. Varied Multi-Wing Stepped War-Torn City Buildings & Central Ruined Plaza
   for (let i = 0; i < layout.buildings.length; i++) {
     const b = layout.buildings[i];
     const bGroup = new THREE.Group();
@@ -604,13 +632,38 @@ export function buildWarTornCityScene(
 
     const wallMat = concreteMaterials[b.variant];
 
-    // Raised concrete sidewalk curb plinth
+    // Special central ruined plaza monument (breaks up grid repetition cleanly)
+    if (b.upperH === 0 && b.baseH < 5) {
+      const plazaPad = new THREE.Mesh(sidewalkGeo, trimMat);
+      plazaPad.scale.set(b.w + 7.5, 0.9, b.d + 7.5);
+      plazaPad.position.y = 0.14;
+      plazaPad.receiveShadow = true;
+      bGroup.add(plazaPad);
+
+      const fountainBase = new THREE.Mesh(monumentBaseGeo, concreteMaterials[0]);
+      fountainBase.position.y = 0.72;
+      fountainBase.castShadow = true;
+      fountainBase.receiveShadow = true;
+      bGroup.add(fountainBase);
+
+      const brokenPillar = new THREE.Mesh(monumentPillarGeo, concreteMaterials[2]);
+      brokenPillar.position.set(0.3, 2.4, -0.2);
+      brokenPillar.rotation.set(0.14, 0.4, -0.18);
+      brokenPillar.castShadow = true;
+      bGroup.add(brokenPillar);
+
+      root.add(bGroup);
+      continue;
+    }
+
+    // Raised weathered concrete sidewalk curb plinth contrasting with dark #1f2429 asphalt
     const plinth = new THREE.Mesh(sidewalkGeo, trimMat);
-    plinth.scale.set(b.w + 3.2, 1, b.d + 3.2);
-    plinth.position.y = 0.14;
+    plinth.scale.set(b.w + 3.8, 1, b.d + 3.8);
+    plinth.position.y = 0.15;
+    plinth.receiveShadow = true;
     bGroup.add(plinth);
 
-    // Lower intact reinforced concrete structure
+    // Lower reinforced concrete structure
     const lower = new THREE.Mesh(unitBoxGeo, wallMat);
     lower.scale.set(b.w, b.baseH, b.d);
     lower.position.y = b.baseH * 0.5;
@@ -618,90 +671,116 @@ export function buildWarTornCityScene(
     lower.receiveShadow = true;
     bGroup.add(lower);
 
-    // Exposed dark window bands carved across lower story facades
-    const floors = Math.max(1, Math.min(4, Math.floor(b.baseH / 4.2)));
+    // Architectural cornice ledge & corner pilasters to eliminate flat toy-box walls
+    const cornice = new THREE.Mesh(unitBoxGeo, trimMat);
+    cornice.scale.set(b.w + 0.55, 0.52, b.d + 0.55);
+    cornice.position.y = b.baseH - 0.2;
+    bGroup.add(cornice);
+
+    // Corner concrete piers (2 diagonal paired ribs forming 4 vertical corner framing columns)
+    const pierX = new THREE.Mesh(unitBoxGeo, trimMat);
+    pierX.scale.set(b.w + 0.34, b.baseH, b.d * 0.16);
+    pierX.position.set(0, b.baseH * 0.5, b.d * 0.42);
+    bGroup.add(pierX);
+
+    const pierX2 = new THREE.Mesh(unitBoxGeo, trimMat);
+    pierX2.scale.set(b.w + 0.34, b.baseH, b.d * 0.16);
+    pierX2.position.set(0, b.baseH * 0.5, -b.d * 0.42);
+    bGroup.add(pierX2);
+
+    // Charred recessed dark interior window bands across lower story facades
+    const floors = Math.max(1, Math.min(4, Math.floor(b.baseH / 4.0)));
     for (let f = 0; f < floors; f++) {
-      const wy = 2.4 + f * 3.8;
+      const wy = 2.5 + f * 3.75;
       if (wy > b.baseH - 1.5) break;
       const bandX = new THREE.Mesh(unitBoxGeo, windowVoidMat);
-      bandX.scale.set(b.w + 0.18, 1.35, b.d * 0.76);
+      bandX.scale.set(b.w + 0.16, 1.45, b.d * 0.72);
       bandX.position.y = wy;
       bGroup.add(bandX);
 
       const bandZ = new THREE.Mesh(unitBoxGeo, windowVoidMat);
-      bandZ.scale.set(b.w * 0.76, 1.35, b.d + 0.18);
+      bandZ.scale.set(b.w * 0.72, 1.45, b.d + 0.16);
       bandZ.position.y = wy;
       bGroup.add(bandZ);
     }
 
-    // Tiered jagged upper ruined story + slanted collapsed roof slab
+    // Asymmetric stepped wing / annex on side of building for real city-block massing
     if (b.upperH > 1) {
+      const wingW = b.w * (b.variant === 0 ? 0.68 : 0.82);
+      const wingD = b.d * (b.variant === 1 ? 0.64 : 0.78);
+      const uOffX = (b.variant === 0 ? -1 : b.variant === 2 ? 1 : 0) * (b.w - wingW) * 0.42;
+      const uOffZ = (b.variant === 1 ? -1 : 1) * (b.d - wingD) * 0.36;
+
       const upper = new THREE.Mesh(unitBoxGeo, concreteMaterials[(b.variant + 1) % 3]);
-      upper.scale.set(b.w * 0.82, b.upperH, b.d * 0.82);
-      upper.position.set(
-        (b.variant - 1) * 1.1,
-        b.baseH + b.upperH * 0.44,
-        (1 - b.variant) * 0.9,
-      );
-      upper.rotation.set(b.ruinTiltX * 0.32, 0, b.ruinTiltZ * 0.32);
+      upper.scale.set(wingW, b.upperH, wingD);
+      upper.position.set(uOffX, b.baseH + b.upperH * 0.46, uOffZ);
+      upper.rotation.set(b.ruinTiltX * 0.22, 0, b.ruinTiltZ * 0.22);
       upper.castShadow = true;
+      upper.receiveShadow = true;
       bGroup.add(upper);
 
-      // Jagged broken parapet walls & slanted collapsed roof slab flush with upper structure
-      const uw = b.w * 0.82;
-      const ud = b.d * 0.82;
-      const roofY = b.baseH + b.upperH * 0.94;
-      const uOffX = (b.variant - 1) * 1.1;
-      const uOffZ = (1 - b.variant) * 0.9;
+      // Charred window band on stepped upper floor
+      if (b.upperH >= 5) {
+        const upWinX = new THREE.Mesh(unitBoxGeo, windowVoidMat);
+        upWinX.scale.set(wingW + 0.16, 1.4, wingD * 0.68);
+        upWinX.position.set(uOffX, b.baseH + b.upperH * 0.5, uOffZ);
+        bGroup.add(upWinX);
 
+        const upWinZ = new THREE.Mesh(unitBoxGeo, windowVoidMat);
+        upWinZ.scale.set(wingW * 0.68, 1.4, wingD + 0.16);
+        upWinZ.position.set(uOffX, b.baseH + b.upperH * 0.5, uOffZ);
+        bGroup.add(upWinZ);
+      }
+
+      // Jagged broken parapet walls & scorched collapsed roof slab
+      const roofY = b.baseH + b.upperH * 0.94;
       const brokenSlab = new THREE.Mesh(unitBoxGeo, scorchedMat);
-      brokenSlab.scale.set(uw * 0.86, 0.65, ud * 0.86);
+      brokenSlab.scale.set(wingW * 0.88, 0.7, wingD * 0.88);
       brokenSlab.position.set(uOffX, roofY, uOffZ);
-      brokenSlab.rotation.set(b.ruinTiltX * 0.65, 0, b.ruinTiltZ * 0.65);
+      brokenSlab.rotation.set(b.ruinTiltX * 0.55, 0, b.ruinTiltZ * 0.55);
       bGroup.add(brokenSlab);
 
-      // Two broken corner parapet walls of asymmetric heights for authentic war-torn silhouette
       const parapetA = new THREE.Mesh(unitBoxGeo, wallMat);
-      parapetA.scale.set(uw * 0.56, 1.8 + (b.id % 3) * 0.65, 0.95);
-      parapetA.position.set(uOffX - uw * 0.16, roofY + 0.9, uOffZ + ud * 0.44);
-      parapetA.rotation.z = b.ruinTiltZ * 0.45;
+      parapetA.scale.set(wingW * 0.58, 1.9 + (b.id % 3) * 0.7, 0.95);
+      parapetA.position.set(uOffX - wingW * 0.14, roofY + 0.92, uOffZ + wingD * 0.45);
+      parapetA.rotation.z = b.ruinTiltZ * 0.4;
       bGroup.add(parapetA);
 
       const parapetB = new THREE.Mesh(unitBoxGeo, trimMat);
-      parapetB.scale.set(0.95, 1.4 + ((b.id + 1) % 3) * 0.6, ud * 0.54);
-      parapetB.position.set(uOffX + uw * 0.44, roofY + 0.75, uOffZ - ud * 0.15);
-      parapetB.rotation.x = b.ruinTiltX * 0.45;
+      parapetB.scale.set(0.95, 1.5 + ((b.id + 1) % 3) * 0.65, wingD * 0.56);
+      parapetB.position.set(uOffX + wingW * 0.45, roofY + 0.78, uOffZ - wingD * 0.14);
+      parapetB.rotation.x = b.ruinTiltX * 0.4;
       bGroup.add(parapetB);
 
-      // Exposed steel beam ribs sticking out of the top ruin
+      // Exposed rusted steel I-beam protruding from bombed upper story
       const rib = new THREE.Mesh(unitBoxGeo, rebarMat);
-      rib.scale.set(uw * 0.45, 0.28, 0.32);
-      rib.position.set(uOffX + 0.4, roofY + 1.1, uOffZ);
-      rib.rotation.set(0.16, b.id * 0.5, -0.28);
+      rib.scale.set(wingW * 0.48, 0.28, 0.34);
+      rib.position.set(uOffX + 0.5, roofY + 1.15, uOffZ);
+      rib.rotation.set(0.18, b.id * 0.5, -0.32);
       bGroup.add(rib);
     }
 
     root.add(bGroup);
   }
 
-  // 4. Distant Perimeter Ruined Horizon Silhouettes (natural urban outskirts fading into dusty fog)
+  // 4. Distant Perimeter Ruined Skyline Silhouettes (fades naturally into dusty urban horizon)
   const outskirtGeo = new THREE.BoxGeometry(1, 1, 1);
-  const outskirtCount = 44;
+  const outskirtCount = 48;
   const outskirtInst = new THREE.InstancedMesh(outskirtGeo, concreteMaterials[1], outskirtCount);
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
   for (let i = 0; i < outskirtCount; i++) {
     const angle = (i / outskirtCount) * Math.PI * 2;
-    const dist = CITY_PLAYABLE_HALF + 38 + (i % 3) * 26;
-    const h = 14 + rand() * 34;
+    const dist = CITY_PLAYABLE_HALF + 38 + (i % 3) * 28;
+    const h = 15 + rand() * 38;
     const w = 18 + rand() * 22;
     const d = 18 + rand() * 22;
     dummy.position.set(Math.cos(angle) * dist, h * 0.5, Math.sin(angle) * dist);
-    dummy.rotation.set((rand() - 0.5) * 0.12, angle + rand() * 0.4, (rand() - 0.5) * 0.12);
+    dummy.rotation.set((rand() - 0.5) * 0.1, angle + rand() * 0.35, (rand() - 0.5) * 0.1);
     dummy.scale.set(w, h, d);
     dummy.updateMatrix();
     outskirtInst.setMatrixAt(i, dummy.matrix);
-    col.setHex(i % 2 === 0 ? 0x7c7468 : 0x6b655c);
+    col.setHex(i % 2 === 0 ? 0x7d7468 : 0x675f55);
     outskirtInst.setColorAt(i, col);
   }
   outskirtInst.instanceMatrix.needsUpdate = true;
@@ -709,7 +788,7 @@ export function buildWarTornCityScene(
   outskirtInst.computeBoundingSphere();
   root.add(outskirtInst);
 
-  // 5. InstancedMesh Concrete Barricades (سنگر بتنی — Jersey barriers with amber hazard stripe)
+  // 5. InstancedMesh Jersey Concrete Barricades + Stacked Sandbag Bunkers along street corners
   const barrierShape = new THREE.Shape();
   barrierShape.moveTo(-0.78, 0);
   barrierShape.lineTo(0.78, 0);
@@ -727,9 +806,9 @@ export function buildWarTornCityScene(
   });
   barrierGeo.translate(0, 0, -3.0);
   const barrierMat = new THREE.MeshStandardMaterial({
-    color: 0x9b9284,
+    color: 0xa4998a,
     roughness: 0.88,
-    metalness: 0.06,
+    metalness: 0.05,
   });
   const barrierInst = new THREE.InstancedMesh(barrierGeo, barrierMat, layout.barricades.length);
   for (let i = 0; i < layout.barricades.length; i++) {
@@ -739,7 +818,7 @@ export function buildWarTornCityScene(
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     barrierInst.setMatrixAt(i, dummy.matrix);
-    col.setHex(i % 3 === 0 ? 0xa59a87 : 0x8c8578);
+    col.setHex(i % 3 === 0 ? 0xb0a391 : 0x8e8579);
     barrierInst.setColorAt(i, col);
   }
   barrierInst.instanceMatrix.needsUpdate = true;
@@ -747,8 +826,37 @@ export function buildWarTornCityScene(
   barrierInst.computeBoundingSphere();
   root.add(barrierInst);
 
-  // 6. InstancedMesh Concrete Rubble Chunks (~260 debris rocks clustered around building edges)
-  const rubbleCount = 260;
+  // Sandbag stacks organically tucked behind Jersey barriers & building corners (InstancedMesh)
+  const sandbagGeo = new THREE.CylinderGeometry(0.42, 0.48, 1.35, 7);
+  sandbagGeo.rotateZ(Math.PI / 2);
+  const sandbagMat = new THREE.MeshStandardMaterial({
+    color: 0xa99674,
+    roughness: 0.96,
+    metalness: 0.02,
+  });
+  const sandbagCount = layout.barricades.length * 3;
+  const sandbagInst = new THREE.InstancedMesh(sandbagGeo, sandbagMat, sandbagCount);
+  let sbIdx = 0;
+  for (let i = 0; i < layout.barricades.length; i++) {
+    const bar = layout.barricades[i];
+    const yaw = bar.rotated ? 0 : Math.PI * 0.5;
+    for (let k = 0; k < 3; k++) {
+      const off = (k - 1) * 1.45;
+      const ox = bar.rotated ? 1.05 : off;
+      const oz = bar.rotated ? off : 1.05;
+      dummy.position.set(bar.x + ox, k === 1 ? 0.72 : 0.34, bar.z + oz);
+      dummy.rotation.set(0, yaw + (rand() - 0.5) * 0.25, 0);
+      dummy.scale.set(1, 0.72, 1);
+      dummy.updateMatrix();
+      sandbagInst.setMatrixAt(sbIdx++, dummy.matrix);
+    }
+  }
+  sandbagInst.instanceMatrix.needsUpdate = true;
+  sandbagInst.computeBoundingSphere();
+  root.add(sandbagInst);
+
+  // 6. InstancedMesh Concrete Rubble Mounds (~280 chunks) + Broken Angular Concrete Slabs (~90)
+  const rubbleCount = 280;
   const rubbleGeo = new THREE.DodecahedronGeometry(0.95, 0);
   const rubbleMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -756,29 +864,30 @@ export function buildWarTornCityScene(
     metalness: 0.04,
   });
   const rubbleInst = new THREE.InstancedMesh(rubbleGeo, rubbleMat, rubbleCount);
-  const rubblePalette = [0x8b8173, 0x706a61, 0x9e8f7b, 0x5c564f, 0x675f55];
+  const rubblePalette = [0x8c8275, 0x6e655b, 0x9c907f, 0x565049, 0x45403a];
   for (let i = 0; i < rubbleCount; i++) {
     const b = layout.buildings[i % layout.buildings.length];
     const side = i % 4;
     let rx = b.cx;
     let rz = b.cz;
+    // Cluster organically near corners and collapsed walls (keeping wide street centers navigable)
     if (side === 0) {
-      rx = b.cx + (rand() - 0.5) * (b.w + 4);
-      rz = b.cz + b.d * 0.5 + 1.2 + rand() * 3.8;
+      rx = b.cx + (rand() - 0.5) * (b.w + 4.5);
+      rz = b.cz + b.d * 0.5 + 1.1 + rand() * 3.6;
     } else if (side === 1) {
-      rx = b.cx + (rand() - 0.5) * (b.w + 4);
-      rz = b.cz - b.d * 0.5 - 1.2 - rand() * 3.8;
+      rx = b.cx + (rand() - 0.5) * (b.w + 4.5);
+      rz = b.cz - b.d * 0.5 - 1.1 - rand() * 3.6;
     } else if (side === 2) {
-      rx = b.cx + b.w * 0.5 + 1.2 + rand() * 3.8;
-      rz = b.cz + (rand() - 0.5) * (b.d + 4);
+      rx = b.cx + b.w * 0.5 + 1.1 + rand() * 3.6;
+      rz = b.cz + (rand() - 0.5) * (b.d + 4.5);
     } else {
-      rx = b.cx - b.w * 0.5 - 1.2 - rand() * 3.8;
-      rz = b.cz + (rand() - 0.5) * (b.d + 4);
+      rx = b.cx - b.w * 0.5 - 1.1 - rand() * 3.6;
+      rz = b.cz + (rand() - 0.5) * (b.d + 4.5);
     }
-    const sx = 0.55 + rand() * 1.35;
-    const sy = 0.3 + rand() * 0.75;
-    const sz = 0.55 + rand() * 1.35;
-    dummy.position.set(rx, sy * 0.42, rz);
+    const sx = 0.55 + rand() * 1.45;
+    const sy = 0.28 + rand() * 0.85;
+    const sz = 0.55 + rand() * 1.45;
+    dummy.position.set(rx, sy * 0.4, rz);
     dummy.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
     dummy.scale.set(sx, sy, sz);
     dummy.updateMatrix();
@@ -791,12 +900,40 @@ export function buildWarTornCityScene(
   rubbleInst.computeBoundingSphere();
   root.add(rubbleInst);
 
-  // 7. InstancedMesh Blast Craters on Streets (offset +0.03m with polygonOffset to avoid Z-fighting)
-  const craterCount = 26;
+  // Broken fallen concrete wall slabs leaning against building curbs
+  const slabCount = 96;
+  const slabGeo = new THREE.BoxGeometry(2.8, 0.34, 1.9);
+  const slabInst = new THREE.InstancedMesh(slabGeo, rubbleMat, slabCount);
+  for (let i = 0; i < slabCount; i++) {
+    const b = layout.buildings[i % layout.buildings.length];
+    const cornerX = i % 2 === 0 ? 1 : -1;
+    const cornerZ = i % 4 < 2 ? 1 : -1;
+    const sx = b.cx + cornerX * (b.w * 0.5 + 1.4 + rand() * 1.8);
+    const sz = b.cz + cornerZ * (b.d * 0.5 + 1.2 + rand() * 1.6);
+    dummy.position.set(sx, 0.42 + rand() * 0.45, sz);
+    dummy.rotation.set(
+      (rand() - 0.5) * 0.55,
+      rand() * Math.PI,
+      (rand() - 0.5) * 0.55,
+    );
+    const scale = 0.75 + rand() * 0.75;
+    dummy.scale.set(scale, 1, scale);
+    dummy.updateMatrix();
+    slabInst.setMatrixAt(i, dummy.matrix);
+    col.setHex(rubblePalette[(i + 1) % rubblePalette.length]);
+    slabInst.setColorAt(i, col);
+  }
+  slabInst.instanceMatrix.needsUpdate = true;
+  if (slabInst.instanceColor) slabInst.instanceColor.needsUpdate = true;
+  slabInst.computeBoundingSphere();
+  root.add(slabInst);
+
+  // 7. InstancedMesh Blast Craters on Dark Asphalt Streets (offset +0.03m with polygonOffset)
+  const craterCount = 28;
   const craterGeo = new THREE.CircleGeometry(3.4, 12);
   craterGeo.rotateX(-Math.PI / 2);
   const craterMat = new THREE.MeshStandardMaterial({
-    color: 0x262422,
+    color: 0x0f1215,
     roughness: 0.98,
     metalness: 0.0,
     polygonOffset: true,
@@ -819,18 +956,20 @@ export function buildWarTornCityScene(
   craterInst.computeBoundingSphere();
   root.add(craterInst);
 
-  // 8. Burned-Out Vehicle Hulls (shared geometries & charred rust steel material)
-  const wreckHullGeo = new THREE.BoxGeometry(2.5, 1.15, 4.8);
-  const wreckCabGeo = new THREE.BoxGeometry(2.1, 0.78, 2.2);
+  // 8. Burned-Out Car & Utility Vehicle Husks along curbs (distinct low-profile charred silhouettes)
+  const wreckHullGeo = new THREE.BoxGeometry(2.15, 0.88, 4.55);
+  const wreckCabGeo = new THREE.BoxGeometry(1.9, 0.68, 2.05);
+  const wreckWheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.34, 8);
+  wreckWheelGeo.rotateZ(Math.PI / 2);
   const wreckMat = new THREE.MeshStandardMaterial({
-    color: 0x3b312a,
-    roughness: 0.86,
-    metalness: 0.42,
+    color: 0x2b2522,
+    roughness: 0.88,
+    metalness: 0.44,
   });
   const wreckRustMat = new THREE.MeshStandardMaterial({
-    color: 0x5c3c28,
-    roughness: 0.78,
-    metalness: 0.35,
+    color: 0x573624,
+    roughness: 0.8,
+    metalness: 0.36,
   });
   for (let i = 0; i < layout.wrecks.length; i++) {
     const w = layout.wrecks[i];
@@ -839,14 +978,29 @@ export function buildWarTornCityScene(
     wg.rotation.y = w.yaw;
 
     const hull = new THREE.Mesh(wreckHullGeo, wreckMat);
-    hull.position.y = 0.62;
-    hull.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.08;
+    hull.position.y = 0.58;
+    hull.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.07;
+    hull.castShadow = true;
     wg.add(hull);
 
     const cab = new THREE.Mesh(wreckCabGeo, wreckRustMat);
-    cab.position.set(0, 1.38, -0.35);
-    cab.rotation.set(0.06, 0.05, (i % 2 === 0 ? -1 : 1) * 0.12);
+    cab.position.set(0, 1.24, -0.2);
+    cab.rotation.set(0.05, 0.04, (i % 2 === 0 ? -1 : 1) * 0.11);
+    cab.castShadow = true;
     wg.add(cab);
+
+    // 4 charred wheel stubs grounding the car husk on asphalt
+    const wheelOffsets: ReadonlyArray<[number, number]> = [
+      [-1.08, -1.35],
+      [1.08, -1.35],
+      [-1.08, 1.35],
+      [1.08, 1.35],
+    ];
+    for (let wi = 0; wi < wheelOffsets.length; wi++) {
+      const wh = new THREE.Mesh(wreckWheelGeo, scorchedMat);
+      wh.position.set(wheelOffsets[wi][0], 0.36, wheelOffsets[wi][1]);
+      wg.add(wh);
+    }
 
     root.add(wg);
   }
